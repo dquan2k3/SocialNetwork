@@ -14,6 +14,8 @@ router.post('/getInfo', verifyToken, profileController.getInfo);
 router.post('/getProfile', verifyToken, profileController.getProfile);
 router.post('/getMyProfile', verifyToken, profileController.getMyProfile);
 
+
+
 // -------- Event Routes --------
 router.post('/addEvent', verifyToken, profileController.addEvent);
 router.post('/updateEvent', verifyToken, profileController.updateEvent);

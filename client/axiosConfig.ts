@@ -20,17 +20,14 @@ instance.interceptors.response.use(
   (error) => {
     // Kiểm tra có phản hồi từ server không
     if (error.response) {
-      console.error("❌ Server Error Response:");
-      console.error("Status:", error.response.status);
-      console.error("Data:", error.response.data);
+      console.error(`❌ Server Error Response: Status ${error.response.status}`, error.response.data);
     } else if (error.request) {
-      console.error("❌ No Response from Server:");
-      console.error(error.request);
+      console.error("❌ No Response from Server:", error.request);
     } else {
       console.error("❌ Axios Config Error:", error.message);
     }
 
-    return Promise.reject(error);
+    return Promise.reject(error.response.data);
   }
 );
 

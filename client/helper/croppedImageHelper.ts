@@ -4,7 +4,9 @@ function getCloudinaryImageLink(
   size: number = 190,
   options: { rounded?: boolean } = {}
 ): string {
-  if (!url) return "";
+  if (!url) {
+    return "https://res.cloudinary.com/dpztbd1zk/image/upload/v1758185440/noneAvatar_cyftwm.jpg";
+  }
   const rawUrl = String(url).replace(/^"+|"+$/g, "");
   let area;
   try {

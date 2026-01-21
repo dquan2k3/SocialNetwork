@@ -1,10 +1,74 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { accountModel } from "../model/auth";
+import { profileModel } from '../model/profile';
+import { bioModel } from '../model/bio';
+const redis = require("../config/redis");
+
+
+export const updateLastSeen = async (userId) => {
+    if (!userId) return;
+    try {
+        await accountModel.findByIdAndUpdate(
+            userId, 
+            { lastSeen: new Date() }, 
+            { new: true }
+        );
+    } catch (err) {
+        console.error('Error updating lastSeen:', err);
+    }
+};
+
+export const updateLastSeen2126 = async (userId) => {
+    if (!userId) return;
+    try {
+        const futureDate = new Date('2126-01-01T00:00:00Z');
+        await accountModel.findByIdAndUpdate(
+            userId, 
+            { lastSeen: futureDate }, 
+            { new: true }
+        );
+    } catch (err) {
+        console.error('Error updating lastSeen to 2126:', err);
+    }
+};
+
+function getCloudinaryImageLink(url, croppedArea, size, options) {
+    size = typeof size === "number" ? size : 190;
+    options = options || {};
+    if (!url) {
+        return "https://res.cloudinary.com/dpztbd1zk/image/upload/v1758185440/noneAvatar_cyftwm.jpg";
+    }
+    const rawUrl = String(url).replace(/^"+|"+$/g, "");
+    let area;
+    try {
+        area = typeof croppedArea === "string" ? JSON.parse(croppedArea) : croppedArea;
+    } catch (e) {
+        return rawUrl; // fallback
+    }
+    if (!area || area.width == null || area.height == null) {
+        return rawUrl;
+    }
+
+    var x = area.x, y = area.y, width = area.width, height = area.height;
+    var transform = "/upload/c_crop,x_" + Math.round(x) +
+        ",y_" + Math.round(y) +
+        ",w_" + Math.round(width) +
+        ",h_" + Math.round(height) +
+        "/c_fill,w_" + size + ",h_" + size;
+
+    if (options.rounded) {
+        transform += ",r_max";
+    }
+    transform += "/";
+
+    return rawUrl.replace("/upload/", transform);
+}
 
 // Đăng ký tài khoản mới
 export const register = async (req, res) => {
     const { email, password, rePassword, name } = req.body;
+    console.log(name);
 
     try {
         // Kiểm tra tài khoản đã tồn tại chưa
@@ -27,6 +91,16 @@ export const register = async (req, res) => {
             Password: hashedPassword,
         });
 
+        await profileModel.findOneAndUpdate(
+            { user: newUser._id },
+            {
+                name: name,
+                user: newUser._id,
+                nameChangedDate: new Date()
+            },
+            { new: true, upsert: true }
+        );
+
         res.status(201).json({
             success: true,
             message: 'Đăng ký thành công',
@@ -35,7 +109,7 @@ export const register = async (req, res) => {
                 email: newUser.Email,
                 name: name,
                 role: newUser.Role
-            }
+            },
         });
 
     } catch (error) {
@@ -53,17 +127,39 @@ export const login = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Tài khoản không tồn tại' });
         }
 
+        // Kiểm tra tình trạng ban
+        if (user.banUntil && new Date(user.banUntil) > new Date()) {
+            let reason = user.banReason ? ` vì: ${user.banReason}` : '';
+            return res.status(403).json({
+                success: false,
+                message: `Tài khoản của bạn đã bị cấm${reason}.`
+            });
+        }
+
         const isPasswordValid = await bcrypt.compare(password, user.Password);
 
         if (!isPasswordValid) {
             return res.status(400).json({ success: false, message: 'Sai mật khẩu' });
         }
 
-        // Only put non-sensitive info in token payload (no password)
+        // Lấy bio và profile
+        const bio = await bioModel.findOne(
+            { userid: user._id }, // userid là user._id
+            'avatar avatarCroppedArea'
+        );
+
+        const info = await profileModel.findOne(
+            { user: user._id },
+            'name -_id'
+        );
+
         const tokenPayload = {
             id: user._id,
             email: user.Email,
-            role: user.Role
+            role: user.Role,
+            tokenVersion: user.tokenVersion, 
+            avatar: getCloudinaryImageLink(bio?.avatar, bio?.avatarCroppedArea, 56),
+            name: info?.name
         };
 
         let token;
@@ -88,13 +184,17 @@ export const login = async (req, res) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         console.log('Decoded token:', decoded);
 
+        // Set tokenVersion in redis after successful login
+        await redis.set(`tokenVersion:${user._id}`, user.tokenVersion);
+
         return res.json({
             success: true,
             message: 'Đăng nhập thành công',
             user: {
                 id: user._id,
                 email: user.Email,
-                role: user.Role
+                role: user.Role,
+                tokenVersion: user.tokenVersion 
             }
         });
     } catch (error) {

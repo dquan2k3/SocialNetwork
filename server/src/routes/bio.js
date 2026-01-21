@@ -18,5 +18,7 @@ router.post(
 
 router.post('/getBio', verifyToken, bioController.getBio);
 router.post('/getBioFriendAvatar', verifyToken,  bioController.getBioFriendAvatar);
+router.post('/getcoverhome', verifyToken, bioController.getCoverHome);
+
 
 export default router

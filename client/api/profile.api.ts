@@ -167,3 +167,24 @@ export async function apiGetUserPost(userId: string) {
   });
   return response.data;
 }
+
+export async function apiGetMedia(userId: string) {
+  try {
+    const response = await instance.post("/post/getMedia", { userId });
+    return response.data;
+  } catch (error: any) {
+    if (error.response) {
+      console.error('Lỗi server:', error.response.data);
+    } else {
+      console.error('Lỗi khác:', error.message);     
+    }
+    throw error;
+  }
+}
+export async function apiGetSinglePost(postId: string) {
+  const response = await instance.get("/post/singlePost", {
+    params: { postId },
+  });
+  return response.data;
+}
+

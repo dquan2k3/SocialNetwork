@@ -2,20 +2,12 @@
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import PostingPopup from "./PostingPopup";
 import Showpost from "./Showpost";
+import ShowImage from "./ShowImage";
 import { apiGetHomePost, apiReactPost, apiSharePost, apiUploadPost } from "@/api/post.api";
-import { getCloudinaryImageLink } from "@/helper/croppedImageHelper";
+import { getCloudinaryImageLink, getCloudinaryCoverLink } from "@/helper/croppedImageHelper";
 import { useSelector } from "react-redux";
 import RelationshipButton from "@/components/ui/RelationshipButton";
 import PostReactButton from "./PostReactButton";
-
-const getCloudinaryCoverLink = (
-    url?: string,
-    croppedArea?: any,
-    width: number = 390,
-    height: number = 144
-) => {
-    return url || "https://res.cloudinary.com/dpztbd1zk/image/upload/v1758185478/noneCover_m2j00b.png";
-};
 
 function LoadingDots() {
     return (
@@ -57,6 +49,10 @@ type PostType = {
     myReact?: "like" | "love" | "fun" | "sad" | "angry" | null;
     reactCounts?: { [key in "like" | "love" | "fun" | "sad" | "angry"]?: number };
     updatedAt?: string;
+    // bổ sung để hỗ trợ tạm hiển thị cho post mới đăng
+    _showTempName?: string;
+    _showTempAvatar?: string;
+    _showTempUsername?: string;
 };
 
 export default function HomePost() {
@@ -67,12 +63,22 @@ export default function HomePost() {
     const [loadingPosts, setLoadingPosts] = useState(false);
     const [error, setError] = useState("");
     const user = useSelector((state: any) => state.user);
+    const myName = user.profile?.name;
+    const myUsername = user.profile?.username;
     const myId = user?.userId;
     const myAvatar = getCloudinaryImageLink(user.bio?.avatar, user.bio?.avatarCroppedArea, 56);
     const [relationshipVersion] = useState<{ [key: string]: number }>({});
     const [showImage, setShowImage] = useState(false);
     const [showImageFiles, setShowImageFiles] = useState<any[]>([]);
     const [showImageIdx, setShowImageIdx] = useState(0);
+    const [showImageMetadata, setShowImageMetadata] = useState<{
+        avatar?: string;
+        avatarCroppedArea?: any;
+        name?: string;
+        username?: string;
+        createdAt?: string;
+    } | null>(null);
+
     const [showPostPopup, setShowPostPopup] = useState(false);
     const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
 
@@ -159,23 +165,52 @@ export default function HomePost() {
         );
     }
 
-    const handleRelationshipChangeWithVersion = (_: any) => { /* no-op */ }
+    // Hàm onChange relationship cập nhật relationship của user ở mọi post nếu trùng userId
+    const handleRelationshipChange = (userId: string, relationship: any) => {
+        setPosts(prevPosts =>
+            prevPosts.map(post => {
+                if (post.user === userId) {
+                    return { ...post, relationship: relationship };
+                }
+                return post;
+            })
+        );
+    };
 
     const handleCloseShowImage = () => {
         setShowImage(false);
         setShowImageFiles([]);
         setShowImageIdx(0);
+        setShowImageMetadata(null);
     };
 
+    // Modified handler: expects all image files of the post, and index of the image clicked
     const handleOpenShowImage = ({
         files,
         fileIdx,
+        avatar,
+        avatarCroppedArea,
+        name,
+        username,
+        createdAt
     }: {
         files: any[];
         fileIdx: number;
+        avatar?: string;
+        avatarCroppedArea?: any;
+        name?: string;
+        username?: string;
+        createdAt?: string;
     }) => {
         setShowImageFiles(files);
         setShowImageIdx(fileIdx);
+        setShowImageMetadata({
+            avatar,
+            avatarCroppedArea,
+            name,
+            username,
+            createdAt
+        });
         setShowImage(true);
     };
 
@@ -189,10 +224,49 @@ export default function HomePost() {
         setSelectedPostId(null);
     };
 
+    // ---- NEW: handler xóa post theo id khỏi UI ----
+    const handleDeletePost = (postId: string) => {
+        setPosts((prevPosts) => prevPosts.filter((post) => post._id !== postId));
+        // Nếu đang popup detail post thì tắt nếu vừa xóa post đó:
+        setShowPostPopup(false);
+        setSelectedPostId((currentId) => (currentId === postId ? null : currentId));
+    };
+
+    // --- NEW: onPostComment handler truyền sang Showpost: tăng/giảm số commentCount trong state ---
+    const handlePostComment = useCallback((
+        postId: string,
+        delta: number // +1 thêm bình luận, -1 xóa bình luận
+    ) => {
+        setPosts(prevPosts =>
+            prevPosts.map(post =>
+                post._id === postId
+                    ? { ...post, commentCount: Math.max(0, (post.commentCount || 0) + delta) }
+                    : post
+            )
+        );
+    }, []);
+
+    // --- NEW: onLoadComment handler: đặt (set) số lượng commentCount của post chỉ định bằng một giá trị mới ---
+    const handleLoadComment = useCallback((
+        postId: string,
+        commentCount: number
+    ) => {
+        setPosts(prevPosts =>
+            prevPosts.map(post =>
+                post._id === postId
+                    ? { ...post, commentCount: Math.max(0, commentCount) }
+                    : post
+            )
+        );
+    }, []);
+
+    // Needs to know about the *post* context to pass into handleOpenShowImage
     const renderMedia = (
         file: any,
         idx: number,
-        extra: { className?: string; style?: React.CSSProperties } = {}
+        extra: { className?: string; style?: React.CSSProperties } = {},
+        postContext?: PostType,
+        allFilesOfPost?: any[]
     ) => {
         if (file.file_type === "video") {
             return (
@@ -215,8 +289,18 @@ export default function HomePost() {
                 style={extra.style}
                 onClick={() =>
                     handleOpenShowImage({
-                        files: [file],
-                        fileIdx: 0,
+                        files: allFilesOfPost || [file],
+                        fileIdx: idx,
+                        avatar: postContext?.bioUser?.avatar,
+
+                        avatarCroppedArea: postContext?.bioUser?.avatarCroppedArea,
+                        name: postContext
+                            ? (postContext._showTempName || postContext.profileUser?.name)
+                            : undefined,
+                        username: postContext
+                            ? (postContext._showTempUsername || postContext.profileUser?.username)
+                            : undefined,
+                        createdAt: postContext?.createdAt
                     })
                 }
             />
@@ -241,7 +325,9 @@ export default function HomePost() {
         setIsLoading(true);
         try {
             const res = await apiUploadPost(postData);
+            console.log(res)
             if (res && res.data && res.data.success && res.data.post) {
+                // Xử lý tạm thời các trường name và avatar nếu API chưa trả về
                 const postFromApi = res.data.post;
                 const displayFiles = Array.isArray(postFromApi.files)
                     ? postFromApi.files.map((f: any) => ({ ...f }))
@@ -259,6 +345,7 @@ export default function HomePost() {
                         angry: typeof reactCounts.angry === "number" ? reactCounts.angry : 0,
                     };
                 }
+                // Chèn thông tin chuẩn để Showpost có thể nhận ra người đăng bài là current user ngay sau khi đăng
                 const newPost: PostType = {
                     ...postFromApi,
                     files: displayFiles,
@@ -266,6 +353,21 @@ export default function HomePost() {
                     commentCount: typeof postFromApi.commentCount === "number" ? postFromApi.commentCount : 0,
                     shareCount: typeof postFromApi.shareCount === "number" ? postFromApi.shareCount : 0,
                     likeCount: typeof postFromApi.likeCount === "number" ? postFromApi.likeCount : reactCounts.like,
+                    user: myId, // Dùng myId là user của post mới
+                    profileUser: {
+                        name: myName,
+                        username: myUsername
+                    },
+                    bioUser: {
+                        avatar: user.bio?.avatar,
+                        avatarCroppedArea: user.bio?.avatarCroppedArea,
+                        cover: user.bio?.cover,
+                        coverCroppedArea: user.bio?.coverCroppedArea,
+                    },
+                    // backup cho các trường tạm để hỗ trợ hiển thị nếu props trên chưa đủ
+                    _showTempName: myName,
+                    _showTempAvatar: myAvatar,
+                    _showTempUsername: myUsername,
                 };
                 setPosts((prev) => [newPost, ...prev]);
                 setTextToPost("");
@@ -338,7 +440,27 @@ export default function HomePost() {
         // Call real API
         try {
             const res = await apiReactPost({ postId, react: reactionName || "" });
-            if (!res?.success) {
+            // console.log(res)
+            if (res && res.success && res.reactCounts) {
+                const newReact = typeof res.react === "string" ? res.react : reactionName;
+                setPosts((prev) =>
+                    prev.map((item) => {
+                        if (item._id === postId) {
+                            let likeCount =
+                                typeof item.likeCount === "number"
+                                    ? res.reactCounts.like
+                                    : item.likeCount;
+                            return {
+                                ...item,
+                                myReact: newReact,
+                                reactCounts: { ...res.reactCounts },
+                                likeCount,
+                            };
+                        }
+                        return item;
+                    })
+                );
+            } else {
                 // rollback to previous state if not success
                 setPosts(prevPostsState);
             }
@@ -356,53 +478,58 @@ export default function HomePost() {
     };
 
     // --- onShare handler for PostReactButton ---
-    const handleShare = (post?: PostType) => {
+    const handleShare = async (post?: PostType) => {
         if (!post || !myId) return;
         if (pendingSharePostId === post._id) return; // ngăn share lại khi đang đợi response
         setPendingSharePostId(post._id);
 
-        apiSharePost({ postId: post._id })
-            .then((res: any) => {
-                if (res?.data) {
-                    const { share } = res.data;
-                    setPosts((prevPosts) => {
-                        const updatedPosts = prevPosts.map((p) =>
-                            p._id === post._id
-                                ? {
-                                    ...p,
-                                    shareCount: (() => {
-                                        let base = typeof p.shareCount === "number" ? p.shareCount : 0;
-                                        if (typeof p.hasShared === "boolean") {
-                                            if (share === null && p.hasShared) return base > 0 ? base - 1 : 0;
-                                            if (share && !p.hasShared) return base + 1;
-                                            return base;
-                                        }
-                                        if (share) return base + 1;
-                                        return base > 0 ? base - 1 : 0;
-                                    })(),
-                                    hasShared: !!share
-                                }
-                                : p
-                        );
-                        return updatedPosts;
-                    });
-                }
-            })
-            .catch((err) => {
-                console.error("Share post failed:", err);
-            })
-            .finally(() => {
-                setPendingSharePostId(null);
-            });
+        try {
+            const res = await apiSharePost({ postId: post._id });
+            if (res) {
+                const { share } = res;
+                setPosts((prevPosts) => {
+                    const updatedPosts = prevPosts.map((p) =>
+                        p._id === post._id
+                            ? {
+                                ...p,
+                                shareCount: (() => {
+                                    let base = typeof p.shareCount === "number" ? p.shareCount : 0;
+                                    if (typeof p.hasShared === "boolean") {
+                                        if (share === null && p.hasShared) return base > 0 ? base - 1 : 0;
+                                        if (share && !p.hasShared) return base + 1;
+                                        return base;
+                                    }
+                                    if (share) return base + 1;
+                                    return base > 0 ? base - 1 : 0;
+                                })(),
+                                hasShared: !!share
+                            }
+                            : p
+                    );
+                    return updatedPosts;
+                });
+            }
+        } catch (err) {
+            console.error("Share post failed:", err);
+        } finally {
+            setPendingSharePostId(null);
+        }
     };
 
+    // --- Sửa các hàm lấy tên/avatar/username để hiển thị tạm khi vừa đăng bài ---
     function getPostAvatar(post: PostType, size: number = 40): string {
+        // Ưu tiên trường _showTempAvatar nếu có (từ redux)
+        if (post._showTempAvatar) {
+            return post._showTempAvatar;
+        }
         if (post.bioUser && post.bioUser.avatar) {
             return getCloudinaryImageLink(post.bioUser.avatar, post.bioUser.avatarCroppedArea, size);
         }
         return "https://ui-avatars.com/api/?name=Demo&background=random";
     }
     function getPostName(post: PostType): string {
+        // Ưu tiên trường _showTempName nếu có (từ redux)
+        if (post._showTempName) return post._showTempName;
         if (post.profileUser && post.profileUser.name) {
             return post.profileUser.name;
         }
@@ -410,6 +537,8 @@ export default function HomePost() {
     }
 
     function getPostUsername(post: PostType): string {
+        // Ưu tiên trường _showTempUsername nếu có (từ redux)
+        if (post._showTempUsername) return post._showTempUsername;
         if (post.profileUser && post.profileUser.username) {
             return post.profileUser.username;
         }
@@ -418,47 +547,95 @@ export default function HomePost() {
 
     // --- Hover State logic BEGIN ---
     const [hoveredInfoId, setHoveredInfoId] = useState<string | null>(null);
-    const [hoverFromBlock, setHoverFromBlock] = useState(false);
-    // --- Hover State logic END ---
+
+    // Track time of last mouse activity outside all hovers (div gốc và floating)
+    const lastMouseOutTimestamp = useRef<number>(0);
 
     // -- THROTTLED setHoveredInfoId handlers begin --
     const hoverTimeout = useRef<NodeJS.Timeout | null>(null);
+    // Track if mouse is over floating block or info row, per postId
+    const isInsideHover = useRef<{ [postId: string]: boolean }>({});
 
+    // Helper handler: Set/clear hoveredInfoId only if really outside
+    // This version will ensure floating is only shown when mouse is inside at least one hover zone.
     const throttledHoverHandler = useCallback((postId: string) => {
         if (hoveredInfoId === postId) return;
         if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
         setHoveredInfoId(postId);
+        isInsideHover.current[postId] = true;
     }, [hoveredInfoId]);
 
     const throttledUnhoverHandler = useCallback((postId: string) => {
+        isInsideHover.current[postId] = false;
+        lastMouseOutTimestamp.current = Date.now();
+
+        // Wait 50ms, then check if hovered
         if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
         hoverTimeout.current = setTimeout(() => {
-            setHoveredInfoId(curr => (curr === postId ? null : curr));
+            // Kiểm tra nếu thực sự chuột đã rời cả floating và info row
+            if (!isInsideHover.current[postId]) {
+                setHoveredInfoId(curr => (curr === postId ? null : curr));
+            }
         }, 50);
     }, []);
+
+    // NEW: On document mousemove, nếu hovering block hay row không còn DOM hover, ẩn floating (fix stuck)
+    useEffect(() => {
+        // clear on unmount
+        return () => {
+            if (hoverTimeout.current) clearTimeout(hoverTimeout.current);
+            isInsideHover.current = {};
+        };
+    }, []);
+
+    // Đoạn này là fix stuck hover bằng cách check event bubbling ở document (click/di chuột cách xa sẽ tắt)
+    // Bạn có thể kiểm tra quán tính move, nếu floating bị kẹt
+    useEffect(() => {
+        function handleGlobalMouseMove(e: MouseEvent) {
+            // Nếu không có floating nào cần show, bỏ qua
+            if (!hoveredInfoId) return;
+
+            // Lấy phần tử floating block hiện đang hiện
+            const block = document.querySelector(
+                `[data-float-hover="${hoveredInfoId}"]`
+            );
+            const row = document.querySelector(
+                `[data-row-hover="${hoveredInfoId}"]`
+            );
+
+            // Nếu không có block và row thì ẩn luôn (rare)
+            if (!block && !row) {
+                setHoveredInfoId(null);
+                return;
+            }
+
+            // Kiểm tra nếu mouse đang thực sự ngoài block và ngoài row thì tắt floating (fix stuck)
+            if (block && !block.contains(e.target as Node) && row && !row.contains(e.target as Node)) {
+                setHoveredInfoId(null);
+            }
+        }
+
+        window.addEventListener("mousemove", handleGlobalMouseMove, true);
+        return () => {
+            window.removeEventListener("mousemove", handleGlobalMouseMove, true);
+        };
+    }, [hoveredInfoId]);
+    // --- Hover State logic END ---
 
     return (
         <div className="flex w-full gap-6 justify-center">
             {/* ShowImage popup */}
             {showImage && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex flex-col justify-center items-center">
-                    <div className="bg-white rounded-lg p-6 max-w-xl w-full flex flex-col items-center">
-                        <div className="mb-4">ShowImage:</div>
-                        <div className="mb-2">
-                            <img
-                                src={showImageFiles[showImageIdx]?.file_url}
-                                alt="img"
-                                className="max-h-[400px] max-w-full rounded"
-                            />
-                        </div>
-                        <button
-                            className="px-4 py-2 bg-blue-500 text-white rounded cursor-pointer"
-                            onClick={handleCloseShowImage}
-                        >
-                            Đóng
-                        </button>
-                    </div>
-                </div>
+                <ShowImage
+                    images={showImageFiles}
+                    initialIndex={showImageIdx}
+                    onClose={handleCloseShowImage}
+                    avatar={showImageMetadata?.avatar}
+                    avatarCroppedArea={showImageMetadata?.avatarCroppedArea}
+                    name={showImageMetadata?.name}
+                    username={showImageMetadata?.username}
+                    createdAt={showImageMetadata?.createdAt}
+                />
             )}
 
             {/* Showpost popup */}
@@ -473,7 +650,12 @@ export default function HomePost() {
                         postId
                     ) => handleReact(reactionName, prevReaction, postId)}
                     onShare={() => handleShare(selectedPost)}
+                    onDelete={handleDeletePost}
                     myAvatar={myAvatar}
+                    myName={myName}
+                    myUsername={myUsername}
+                    onPostComment={handlePostComment}
+                    onLoadComment={handleLoadComment}
                 />
             )}
 
@@ -550,14 +732,14 @@ export default function HomePost() {
                                                 minHeight: "200px",
                                                 objectFit: "contain",
                                             },
-                                        })}
+                                        }, p, files)}
                                     </div>
                                 );
                             } else if (fileCount === 2) {
                                 mediaBlock = (
                                     <div className="mt-3 grid grid-cols-2 gap-2">
                                         {files.map((f, idx2) =>
-                                            renderMedia(f, idx2, { className: "h-64" })
+                                            renderMedia(f, idx2, { className: "h-64" }, p, files)
                                         )}
                                     </div>
                                 );
@@ -568,14 +750,14 @@ export default function HomePost() {
                                             {renderMedia(files[0], 0, {
                                                 className: "w-full h-full",
                                                 style: { height: "196px" },
-                                            })}
+                                            }, p, files)}
                                         </div>
                                         <div className="grid grid-cols-2 gap-2 row-span-1">
                                             {files.slice(1, 3).map((f, idx2) =>
                                                 renderMedia(f, idx2 + 1, {
                                                     className: "w-full h-full",
                                                     style: { height: "196px" },
-                                                })
+                                                }, p, files)
                                             )}
                                         </div>
                                     </div>
@@ -590,7 +772,7 @@ export default function HomePost() {
                                             renderMedia(f, idx2, {
                                                 className: "w-full h-full",
                                                 style: { height: "196px" },
-                                            })
+                                            }, p, files)
                                         )}
                                     </div>
                                 );
@@ -604,7 +786,7 @@ export default function HomePost() {
                                                     {renderMedia(f, idx2, {
                                                         className: "w-full h-full",
                                                         style: { height: "100%" },
-                                                    })}
+                                                    }, p, files)}
                                                 </div>
                                             ))}
                                         </div>
@@ -616,13 +798,18 @@ export default function HomePost() {
                                                             {renderMedia(f, idx2 + 2, {
                                                                 className: "w-full h-full",
                                                                 style: { height: "100%" },
-                                                            })}
+                                                            }, p, files)}
                                                             <div
                                                                 className="absolute inset-0 bg-black bg-opacity-60 flex items-center justify-center rounded-lg cursor-pointer"
                                                                 onClick={() =>
                                                                     handleOpenShowImage({
                                                                         files: files,
                                                                         fileIdx: idx2 + 2,
+                                                                        avatar: p.bioUser?.avatar,                                                                            
+                                                                        avatarCroppedArea: p.bioUser?.avatarCroppedArea,
+                                                                        name: p._showTempName || p.profileUser?.name,
+                                                                        username: p._showTempUsername || p.profileUser?.username,
+                                                                        createdAt: p.createdAt
                                                                     })
                                                                 }
                                                             >
@@ -638,7 +825,7 @@ export default function HomePost() {
                                                         {renderMedia(f, idx2 + 2, {
                                                             className: "w-full h-full",
                                                             style: { height: "100%" },
-                                                        })}
+                                                        }, p, files)}
                                                     </div>
                                                 );
                                             })}
@@ -653,11 +840,33 @@ export default function HomePost() {
                             const shouldUseHover = user && p.user !== user.userId;
                             const showFloating = shouldUseHover && hoveredInfoId === p._id;
 
+                            // Sử dụng data attributes xác định để truy cập outside click/move detection
+                            // Chuột vào hoặc rời info row
                             const handleMouseEnter = () => {
-                                if (shouldUseHover) throttledHoverHandler(p._id);
+                                if (shouldUseHover) {
+                                    isInsideHover.current[p._id] = true;
+                                    throttledHoverHandler(p._id);
+                                }
                             };
                             const handleMouseLeave = () => {
-                                if (shouldUseHover) throttledUnhoverHandler(p._id);
+                                if (shouldUseHover) {
+                                    isInsideHover.current[p._id] = false;
+                                    throttledUnhoverHandler(p._id);
+                                }
+                            };
+
+                            // Chuột vào hoặc rời floating popover
+                            const handleFloatingMouseEnter = () => {
+                                if (shouldUseHover) {
+                                    isInsideHover.current[p._id] = true;
+                                    throttledHoverHandler(p._id);
+                                }
+                            };
+                            const handleFloatingMouseLeave = () => {
+                                if (shouldUseHover) {
+                                    isInsideHover.current[p._id] = false;
+                                    throttledUnhoverHandler(p._id);
+                                }
                             };
 
                             return (
@@ -669,12 +878,13 @@ export default function HomePost() {
                                     <div style={{ position: "relative" }}>
                                         {showFloating && (
                                             <div
+                                                data-float-hover={p._id}
                                                 className={
                                                     `absolute top-10 z-50 w-[420px] bg-[#252728] border border-gray-600 rounded-xl flex-col transition-opacity duration-200 flex pointer-events-auto opacity-100`
                                                 }
                                                 style={{ left: 0 }}
-                                                onMouseEnter={handleMouseEnter}
-                                                onMouseLeave={handleMouseLeave}
+                                                onMouseEnter={handleFloatingMouseEnter}
+                                                onMouseLeave={handleFloatingMouseLeave}
                                             >
                                                 <div
                                                     className="w-full h-[144px] bg-black rounded-t-xl"
@@ -739,8 +949,8 @@ export default function HomePost() {
                                                                     )
                                                                     : undefined
                                                             }
-                                                            avatarCroppedArea={p.bioUser?.avatarCroppedArea}
                                                             username={p.profileUser?.username}
+                                                            onRelationshipChange={handleRelationshipChange}
                                                         />
                                                     </div>
                                                 </>
@@ -750,6 +960,7 @@ export default function HomePost() {
                                         {/* Info Row (avatar, name, time) triggers floating block on mouseEnter/Leave */}
                                         <div className="flex w-full">
                                             <div
+                                                data-row-hover={p._id}
                                                 className={`flex items-center relative pr-2 z-20 max-w-full ${shouldUseHover ? "cursor-pointer" : ""}`}
                                                 onMouseEnter={handleMouseEnter}
                                                 onMouseLeave={handleMouseLeave}

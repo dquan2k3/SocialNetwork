@@ -1,11 +1,12 @@
 "use client";
 import { useEffect } from "react";
-import { useDispatch } from "react-redux";
+import { useDispatch, useSelector } from "react-redux";
 import { addBio, addProfile, setUserId } from "@/store/slices/userSlice";
 import instance from "@/axiosConfig";
 
 export function useInitUser() {
     const dispatch = useDispatch();
+    const isAuthenticated = useSelector((state: any) => state.auth);
     useEffect(() => {
         const fetchBioAndName = async () => {
             try {
@@ -33,5 +34,5 @@ export function useInitUser() {
         };
 
         fetchBioAndName();
-    }, []);
+    }, [isAuthenticated]);
 }

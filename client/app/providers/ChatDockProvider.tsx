@@ -24,6 +24,8 @@ export interface ChatConversation {
   avatarUrl?: string;
   messages?: ChatMessage[];
   conversationId?: string; // Truyền conversationId qua tab chat
+  type?: "private" | "group" | "self"; // Thêm type "self"
+  owner?: string; // Thêm biến owner
 }
 
 type OpenChatPayload = {
@@ -31,6 +33,8 @@ type OpenChatPayload = {
   title: string;
   avatarUrl?: string;
   conversationId?: string;
+  type?: "private" | "group" | "self"; // Thêm type "self" vào payload
+  owner?: string; // Thêm biến owner
 };
 
 type ChatDockContextValue = {
@@ -79,6 +83,8 @@ const ChatDockProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
                 avatarUrl: payload.avatarUrl ?? c.avatarUrl,
                 messages: c.messages || [],
                 conversationId: payload.conversationId ?? c.conversationId,
+                type: payload.type ?? c.type, // Ưu tiên nhận type mới, fallback type cũ nếu có
+                owner: payload.owner ?? c.owner, // Ưu tiên nhận owner mới, fallback owner cũ nếu có
               }
             : c
         );
@@ -91,6 +97,8 @@ const ChatDockProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
           avatarUrl: payload.avatarUrl,
           conversationId: payload.conversationId,
           messages: [],
+          type: payload.type, // Thêm type (private|group|self)
+          owner: payload.owner, // Thêm owner
         },
       ];
     });

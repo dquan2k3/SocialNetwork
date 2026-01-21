@@ -6,6 +6,7 @@ import ReduxProvider from "./providers/ReduxProvider";
 import HeaderWrapper from "@/components/layout/HeaderWrapped";
 import ClientInit from "@/components/ClientInit";
 import ChatDockProvider from "./providers/ChatDockProvider";
+import { MessagePriorityProvider } from "@/context/messagePriority/messagePriorityProvider";
 import { SocketWrapped } from "./providers/SocketWrapped";
 
 const geistSans = Geist({
@@ -40,11 +41,16 @@ export default function RootLayout({
 
             <ClientInit>
 
-              <ChatDockProvider>
-                <HeaderWrapper />
-
-                {children}
-              </ChatDockProvider>
+              <MessagePriorityProvider>
+                <ChatDockProvider>
+                  <HeaderWrapper />
+                  <main className="pt-16 flex flex-col h-screen overflow-hidden">
+                    <div className="flex-1 overflow-y-auto custom-scroll">
+                      {children}
+                    </div>
+                  </main>
+                </ChatDockProvider>
+              </MessagePriorityProvider>
             </ClientInit>
           </SocketWrapped>
         </ReduxProvider>

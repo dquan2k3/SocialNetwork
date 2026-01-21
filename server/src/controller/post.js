@@ -1,11 +1,16 @@
-import { postModel, postFileModel } from '../model/post';
+import {
+    postModel,
+    postFileModel,
+    postReactModel,
+    postCommentModel,
+    postShareModel,
+    postReportedModel,
+    commentReportedModel
+} from '../model/post';
 import { bioModel } from '../model/bio';
 import { profileModel } from '../model/profile';
 import { Relationship } from '../model/relationship';
-import { postReactModel } from '../model/post';
-import { postCommentModel } from '../model/post';
-import { postShareModel } from '../model/post';
-import { postReportedModel } from '../model/post'
+import { notifyReact, notifyComment, deleteCommentNotification, notifyShare, deleteShareNotification } from './notification';
 
 const fs = require("fs");
 const cloudinary = require('../config/cloudinaryConfig');
@@ -122,8 +127,272 @@ export const getProfilePosts = async (req, res) => {
         // Cho phép client truyền thêm userId qua query hoặc body (ưu tiên: query > body > mặc định là chính mình)
         let profileUserId = req.query.userId || req.body?.userId || currentUserId;
 
-        // Lấy post của profileUserId, nhưng các thông tin phụ (react/share của bản thân) dùng currentUserId
-        const posts = await postModel.find({ user: profileUserId }).sort({ createdAt: -1 }).lean();
+        // Lấy post của profileUserId (KHÔNG lấy post thuộc group, tức là có trường groupId)
+        const posts = await postModel.find({
+            user: profileUserId,
+            $or: [
+                { groupId: { $exists: false } },
+                { groupId: null }
+            ]
+        }).sort({ createdAt: -1 }).lean();
+
+        // Lấy danh sách các post đã share (lấy trường post và createdAt)
+        // Mỗi phần tử có dạng: { post: ObjectId, createdAt: Date }
+        const sharedPostIdArr = await postShareModel.find({ user: profileUserId }, { post: 1, createdAt: 1, _id: 0 }).lean();
+
+        // --- Lấy các post objects của các post đã share ---
+        const sharedPostIds = sharedPostIdArr.map(s => s.post).filter(Boolean);
+
+        // Lấy post objs của các bài đã share (bỏ các post đã bị xóa/ngừng public sẽ không lấy được)
+        const sharedPostsObjsUnsorted = sharedPostIds.length > 0
+            ? await postModel.find({ _id: { $in: sharedPostIds } }).lean()
+            : [];
+
+        // Đảm bảo đúng thứ tự share (theo sharedPostIdArr)
+        const sharedPostsMap = {};
+        for (const p of sharedPostsObjsUnsorted) sharedPostsMap[String(p._id)] = p;
+
+        // --- Lấy name của user chia sẻ (profileUserId) ---
+        let shareUserName = null;
+        const shareUserProfile = await profileModel.findOne({ user: profileUserId }, 'name').lean();
+        if (shareUserProfile && shareUserProfile.name) {
+            shareUserName = shareUserProfile.name;
+        }
+
+        // Ghép các post đã share với mốc shareAt và gán originalPostId giữ dạng ObjectId
+        const sharedPosts = [];
+        for (const share of sharedPostIdArr) {
+            const postObj = sharedPostsMap[String(share.post)];
+            if (postObj) {
+                sharedPosts.push({
+                    ...postObj,
+                    type: "share",
+                    shareAt: share.createdAt,
+                    originalPostId: postObj._id,
+                    shareUserName: shareUserName
+                });
+            }
+        }
+
+        // Chuẩn hóa post gốc
+        const mainPosts = posts.map(p => ({
+            ...p,
+            type: null,
+            shareAt: null,
+            originalPostId: null
+        }));
+
+        // Trộn và giữ originalPostId là ObjectId
+        let allPostsUnsorted = [
+            ...mainPosts,
+            ...sharedPosts
+        ];
+
+        // Sắp xếp tất cả theo thời gian
+        allPostsUnsorted.sort((a, b) => {
+            const aTime = a.type === "share" ? new Date(a.shareAt) : new Date(a.createdAt);
+            const bTime = b.type === "share" ? new Date(b.shareAt) : new Date(b.createdAt);
+            return bTime - aTime;
+        });
+
+        // Lấy tất cả postIds dạng ObjectId (KHÔNG convert String ở đây!!)
+        const allPostIds = allPostsUnsorted.map(p =>
+            p.type === "share" ? p.originalPostId : p._id
+        );
+
+        // Lấy files, reacts, comment counts, shares count cho tất cả post liên quan (query luôn bằng ObjectId)
+        const files = await postFileModel.find({ post_id: { $in: allPostIds } }).sort({ order_index: 1 }).lean();
+        const postIdToFiles = {};
+        for (const f of files) {
+            const key = String(f.post_id);
+            if (!postIdToFiles[key]) postIdToFiles[key] = [];
+            postIdToFiles[key].push({ file_url: f.file_url, file_type: f.file_type, order_index: f.order_index });
+        }
+
+        const reactStats = await postReactModel.aggregate([
+            { $match: { post: { $in: allPostIds } } },
+            { $group: { _id: { post: "$post", react: "$react" }, count: { $sum: 1 } } }
+        ]);
+        const postIdToReactCounts = {};
+        for (const stat of reactStats) {
+            const postId = String(stat._id.post);
+            const reactName = stat._id.react;
+            if (!postIdToReactCounts[postId]) {
+                postIdToReactCounts[postId] = { like: 0, love: 0, fun: 0, sad: 0, angry: 0 };
+            }
+            postIdToReactCounts[postId][reactName] = stat.count;
+        }
+
+        let postIdToMyReact = {};
+        if (currentUserId) {
+            const myReacts = await postReactModel.find({ post: { $in: allPostIds }, user: currentUserId }).lean();
+            postIdToMyReact = {};
+            myReacts.forEach(r => {
+                postIdToMyReact[String(r.post)] = r.react;
+            });
+        }
+
+        // Lấy các user liên quan
+        const userIds = [...new Set(allPostsUnsorted.map(p => String(p.user)))];
+
+        const bios = await bioModel.find(
+            { userid: { $in: userIds } },
+            'userid avatar cover avatarCroppedArea coverCroppedArea'
+        ).lean();
+        const userIdToBio = {};
+        for (const bio of bios) {
+            userIdToBio[String(bio.userid)] = {
+                avatar: bio.avatar,
+                cover: bio.cover,
+                avatarCroppedArea: bio.avatarCroppedArea,
+                coverCroppedArea: bio.coverCroppedArea
+            };
+        }
+
+        const profiles = await profileModel.find(
+            { user: { $in: userIds } },
+            'user username name'
+        ).lean();
+        const userIdToProfile = {};
+        for (const profile of profiles) {
+            userIdToProfile[String(profile.user)] = {
+                username: profile.username,
+                name: profile.name
+            };
+        }
+
+        let relationships = [];
+        if (userIds.length > 0) {
+            relationships = await Relationship.find({
+                $or: [
+                    { requester: { $in: userIds }, recipient: { $in: userIds } },
+                    { recipient: { $in: userIds }, requester: { $in: userIds } }
+                ]
+            }).lean();
+        }
+        const relMap = {};
+        for (const rel of relationships) {
+            relMap[`${String(rel.requester)}_${String(rel.recipient)}`] = rel;
+            relMap[`${String(rel.recipient)}_${String(rel.requester)}`] = rel;
+        }
+
+        // Share count cho tất cả post
+        const shareStats = await postShareModel.aggregate([
+            { $match: { post: { $in: allPostIds } } },
+            { $group: { _id: "$post", count: { $sum: 1 } } }
+        ]);
+        const postIdToShareCount = {};
+        for (const stat of shareStats) {
+            postIdToShareCount[String(stat._id)] = stat.count;
+        }
+
+        // Kiểm tra currentUser đã share post nào
+        let hasShareMap = {};
+        if (currentUserId) {
+            const userShares = await postShareModel.find({ post: { $in: allPostIds }, user: currentUserId }).lean();
+            userShares.forEach(s => {
+                hasShareMap[String(s.post)] = true;
+            });
+        }
+
+        // Đếm comments
+        const commentCountArr = await postCommentModel.aggregate([
+            { $match: { post: { $in: allPostIds } } },
+            { $group: { _id: "$post", count: { $sum: 1 } } }
+        ]);
+        const postIdToCommentCount = {};
+        for (const stat of commentCountArr) {
+            postIdToCommentCount[String(stat._id)] = stat.count;
+        }
+
+        // Response: khi map, key object JS thì chuyển sang String
+        const result = allPostsUnsorted.map(p => {
+            let relationship = null;
+            if (currentUserId) {
+                if (relMap[`${String(currentUserId)}_${String(p.user)}`]) {
+                    relationship = relMap[`${String(currentUserId)}_${String(p.user)}`];
+                } else if (relMap[`${String(p.user)}_${String(currentUserId)}`]) {
+                    relationship = relMap[`${String(p.user)}_${String(currentUserId)}`];
+                }
+            }
+
+            // CHỈ String hóa ở bước trả về (JS object key + JSON)
+            const postIdForMap = p.type === "share"
+                ? String(p.originalPostId)
+                : String(p._id);
+
+            const reactCounts = postIdToReactCounts[postIdForMap] || { like: 0, love: 0, fun: 0, sad: 0, angry: 0 };
+            const myReact = currentUserId ? (postIdToMyReact[postIdForMap] || null) : null;
+            const hasShared = !!hasShareMap[postIdForMap];
+            const shareCount = postIdToShareCount[postIdForMap] || 0;
+            const commentCount = postIdToCommentCount[postIdForMap] || 0;
+
+            // Thêm trường shareUserName nếu là loại share
+            const extraFields = {};
+            if (p.type === "share" && typeof p.shareUserName !== "undefined") {
+                extraFields.shareUserName = p.shareUserName;
+            }
+
+            return {
+                _id: String(p._id),
+                user: String(p.user),
+                text: p.text,
+                privacy: p.privacy,
+                createdAt: p.createdAt,
+                updatedAt: p.updatedAt,
+                files: postIdToFiles[postIdForMap] || [],
+                reactCounts,
+                myReact,
+                bioUser: userIdToBio[String(p.user)] || null,
+                profileUser: userIdToProfile[String(p.user)] || null,
+                relationship: relationship
+                    ? {
+                        _id: String(relationship._id),
+                        requester: String(relationship.requester),
+                        recipient: String(relationship.recipient),
+                        status: relationship.status
+                    }
+                    : null,
+                hasShared,
+                shareCount,
+                commentCount,
+                type: p.type || null,
+                shareAt: p.type === "share" ? p.shareAt : null,
+                originalPostId: p.type === "share" ? String(p.originalPostId) : null,
+                ...extraFields
+            };
+        });
+        console.log("getProfilePosts: result =", JSON.stringify(result, null, 2));
+        return res.status(200).json({ success: true, posts: result });
+    } catch (error) {
+        console.log(error);
+        res.status(500).json({ success: false, message: error && error.message ? error.message : String(error) });
+    }
+};
+
+export const getProfilePosts2 = async (req, res) => {
+    try {
+        const currentUserId = req.user?.id;
+        if (!currentUserId) {
+            return res.status(400).json({ success: false, message: "Thiếu userId" });
+        }
+
+        // Cho phép client truyền thêm userId qua query hoặc body (ưu tiên: query > body > mặc định là chính mình)
+        let profileUserId = req.query.userId || req.body?.userId || currentUserId;
+
+        // Lấy post của profileUserId (KHÔNG lấy post thuộc group, tức là có trường groupId), các thông tin phụ (react/share của bản thân) dùng currentUserId
+        // Giả định rằng post có thể có trường groupId hoặc không có (có thể là undefined/null nếu không thuộc group)
+        const posts = await postModel.find({
+            user: profileUserId,
+            $or: [
+                { groupId: { $exists: false } },
+                { groupId: null }
+            ]
+        }).sort({ createdAt: -1 }).lean();
+
+        // Lấy danh sách các post đã share (lấy trường post và createdAt)
+        const sharedPostId = await postShareModel.find({ user: profileUserId }, { post: 1, createdAt: 1, _id: 0 }).lean();
+
         const postIds = posts.map(p => p._id);
 
         const files = await postFileModel.find({ post_id: { $in: postIds } }).sort({ order_index: 1 }).lean();
@@ -143,50 +412,103 @@ export const getProfilePosts = async (req, res) => {
             const postId = String(stat._id.post);
             const reactName = stat._id.react;
             if (!postIdToReactCounts[postId]) {
-                postIdToReactCounts[postId] = { ...emptyReacts };
+                postIdToReactCounts[postId] = { like: 0, love: 0, fun: 0, sad: 0, angry: 0 };
             }
             postIdToReactCounts[postId][reactName] = stat.count;
         }
 
-        // My react = react của currentUserId trên những post này
-        const myReacts = await postReactModel.find({ post: { $in: postIds }, user: currentUserId }).lean();
-        const postIdToMyReact = {};
-        myReacts.forEach(r => {
-            postIdToMyReact[String(r.post)] = r.react;
-        });
-
-        const commentCountStats = await postCommentModel.aggregate([
-            { $match: { post: { $in: postIds } } },
-            { $group: { _id: "$post", count: { $sum: 1 } } }
-        ]);
-        const postIdToCommentCount = {};
-        for (const stat of commentCountStats) {
-            postIdToCommentCount[String(stat._id)] = stat.count;
+        let postIdToMyReact = {};
+        if (currentUserId) {
+            const myReacts = await postReactModel.find({ post: { $in: postIds }, user: currentUserId }).lean();
+            postIdToMyReact = {};
+            myReacts.forEach(r => {
+                postIdToMyReact[String(r.post)] = r.react;
+            });
         }
 
-        const shareCountStats = await postShareModel.aggregate([
+        const userIds = [...new Set(posts.map(p => String(p.user)))];
+
+        const bios = await bioModel.find(
+            { userid: { $in: userIds } },
+            'userid avatar cover avatarCroppedArea coverCroppedArea'
+        ).lean();
+        const userIdToBio = {};
+        for (const bio of bios) {
+            userIdToBio[String(bio.userid)] = {
+                avatar: bio.avatar,
+                cover: bio.cover,
+                avatarCroppedArea: bio.avatarCroppedArea,
+                coverCroppedArea: bio.coverCroppedArea
+            };
+        }
+
+        const profiles = await profileModel.find(
+            { user: { $in: userIds } },
+            'user username name'
+        ).lean();
+        const userIdToProfile = {};
+        for (const profile of profiles) {
+            userIdToProfile[String(profile.user)] = {
+                username: profile.username,
+                name: profile.name
+            };
+        }
+
+        let relationships = [];
+        if (userIds.length > 0) {
+            relationships = await Relationship.find({
+                $or: [
+                    { requester: { $in: userIds }, recipient: { $in: userIds } },
+                    { recipient: { $in: userIds }, requester: { $in: userIds } }
+                ]
+            }).lean();
+        }
+        const relMap = {};
+        for (const rel of relationships) {
+            relMap[`${String(rel.requester)}_${String(rel.recipient)}`] = rel;
+            relMap[`${String(rel.recipient)}_${String(rel.requester)}`] = rel;
+        }
+
+        const shareStats = await postShareModel.aggregate([
             { $match: { post: { $in: postIds } } },
             { $group: { _id: "$post", count: { $sum: 1 } } }
         ]);
         const postIdToShareCount = {};
-        for (const stat of shareCountStats) {
+        for (const stat of shareStats) {
             postIdToShareCount[String(stat._id)] = stat.count;
         }
 
-        // Kiểm tra xem currentUserId đã share những post này chưa
-        const sharedByUser = await postShareModel.find({ post: { $in: postIds }, user: currentUserId }).lean();
-        const postIdToHasShared = {};
-        sharedByUser.forEach(s => {
-            postIdToHasShared[String(s.post)] = true;
-        });
+        let hasShareMap = {};
+        if (currentUserId) {
+            const userShares = await postShareModel.find({ post: { $in: postIds }, user: currentUserId }).lean();
+            userShares.forEach(s => {
+                hasShareMap[String(s.post)] = true;
+            });
+        }
 
-        // Không load relationship trong phiên bản này
+        const commentCountArr = await postCommentModel.aggregate([
+            { $match: { post: { $in: postIds } } },
+            { $group: { _id: "$post", count: { $sum: 1 } } }
+        ]);
+        const postIdToCommentCount = {};
+        for (const stat of commentCountArr) {
+            postIdToCommentCount[String(stat._id)] = stat.count;
+        }
+
         const result = posts.map(p => {
-            const reactCounts = postIdToReactCounts[String(p._id)] || emptyReacts;
-            const myReact = postIdToMyReact[String(p._id)] || null;
-            const commentCount = postIdToCommentCount[String(p._id)] || 0;
+            let relationship = null;
+            if (currentUserId) {
+                if (relMap[`${String(currentUserId)}_${String(p.user)}`]) {
+                    relationship = relMap[`${String(currentUserId)}_${String(p.user)}`];
+                } else if (relMap[`${String(p.user)}_${String(currentUserId)}`]) {
+                    relationship = relMap[`${String(p.user)}_${String(currentUserId)}`];
+                }
+            }
+            const reactCounts = postIdToReactCounts[String(p._id)] || { like: 0, love: 0, fun: 0, sad: 0, angry: 0 };
+            const myReact = currentUserId ? (postIdToMyReact[String(p._id)] || null) : null;
+            const hasShared = !!hasShareMap[String(p._id)];
             const shareCount = postIdToShareCount[String(p._id)] || 0;
-            const hasShared = !!postIdToHasShared[String(p._id)];
+            const commentCount = postIdToCommentCount[String(p._id)] || 0;
 
             return {
                 _id: p._id,
@@ -198,9 +520,19 @@ export const getProfilePosts = async (req, res) => {
                 files: postIdToFiles[String(p._id)] || [],
                 reactCounts,
                 myReact,
-                commentCount,
+                bioUser: userIdToBio[String(p.user)] || null,
+                profileUser: userIdToProfile[String(p.user)] || null,
+                relationship: relationship
+                    ? {
+                        _id: relationship._id,
+                        requester: relationship.requester,
+                        recipient: relationship.recipient,
+                        status: relationship.status
+                    }
+                    : null,
                 hasShared,
                 shareCount,
+                commentCount
             };
         });
 
@@ -384,13 +716,15 @@ export const getSinglePost = async (req, res) => {
                 return map;
             }, {});
 
+            // Lấy cả username trong comment profile
             const commentProfiles = await profileModel.find(
                 { user: { $in: commentUserIds } },
-                'user name'
+                'user name username'
             ).lean();
             commentProfileMap = commentProfiles.reduce((map, obj) => {
                 map[String(obj.user)] = {
-                    name: obj.name
+                    name: obj.name,
+                    username: obj.username
                 };
                 return map;
             }, {});
@@ -412,6 +746,7 @@ export const getSinglePost = async (req, res) => {
                 user: {
                     _id: c.user,
                     name: userProfile.name || null,
+                    username: userProfile.username || null,
                     avatar: userBio.avatar || null,
                     avatarCroppedArea: userBio.avatarCroppedArea || null
                 },
@@ -468,7 +803,14 @@ export const getAllPosts = async (req, res) => {
         // userId from req.user.id for myReact/hasShared/relationship etc
         const userId = req.user?.id || null;
 
-        const posts = await postModel.find({}).sort({ createdAt: -1 }).lean();
+        // Chỉ lấy post không có groupId (không phải post của group)
+        const posts = await postModel.find({
+            $or: [
+                { groupId: { $exists: false } },
+                { groupId: null }
+            ]
+        }).sort({ createdAt: -1 }).lean();
+
         const postIds = posts.map(p => p._id);
 
         const files = await postFileModel.find({ post_id: { $in: postIds } }).sort({ order_index: 1 }).lean();
@@ -1050,6 +1392,73 @@ export const getVideo = async (req, res) => {
         res.status(500).json({ success: false, message: 'Lỗi server' });
     }
 };
+
+// Gộp getMedia (images + videos), GIỮ NGUYÊN 2 HÀM Ở TRÊN
+export const getMedia = async (req, res) => {
+    try {
+        // userId from req.user.id (default), allow override by req.body.userId
+        let userId = req.user?.id;
+        if (req.body && req.body.userId) {
+            userId = req.body.userId;
+        }
+        if (!userId) {
+            return res.status(401).json({ success: false, message: 'Không có userId, truy cập bị từ chối' });
+        }
+
+        // Lấy các post của user, KHÔNG lấy post có groupId
+        const posts = await postModel.find({ user: userId, groupId: { $exists: false } }).sort({ createdAt: -1 }).lean();
+        if (!posts || posts.length === 0) {
+            return res.status(200).json({ success: true, images: [], videos: [] });
+        }
+
+        const postIds = posts.map(post => post._id);
+
+        // Lấy tất cả file liên quan tới postIds (KHÔNG lấy files từ post có groupId)
+        const allFiles = await postFileModel.find({
+            post_id: { $in: postIds }
+        }).lean();
+
+        // Tìm image files
+        const imageFiles = allFiles.filter(f => typeof f.file_type === "string" && f.file_type.toLowerCase().startsWith("image"));
+
+        // Tìm video files
+        const videoFiles = allFiles.filter(f => typeof f.file_type === "string" && f.file_type.toLowerCase().startsWith("video"));
+
+        // Chuẩn bị images array
+        const postIdToImageFiles = {};
+        for (const file of imageFiles) {
+            const pid = String(file.post_id);
+            if (!postIdToImageFiles[pid]) postIdToImageFiles[pid] = [];
+            postIdToImageFiles[pid].push(file);
+        }
+        const images = [];
+        for (const post of posts) {
+            const pid = String(post._id);
+            const files = postIdToImageFiles[pid] || [];
+            for (const file of files) {
+                images.push({
+                    url: cloudinary.url(file.file_url, { width: 185, height: 185, crop: "fill" }),
+                    post_id: file.post_id
+                });
+            }
+        }
+
+        // Chuẩn bị videos array
+        const videos = videoFiles.map(file => ({
+            url: cloudinary.url(file.file_url, { resource_type: "video" }),
+            post_id: file.post_id
+        }));
+
+        res.status(200).json({
+            success: true,
+            images,
+            videos
+        });
+    } catch (error) {
+        console.log(error);
+        res.status(500).json({ success: false, message: 'Lỗi server' });
+    }
+};
 /*
  * API: React to post (theo kiểu bảng riêng: post_reacts)
  * Body: { postId, react }
@@ -1059,11 +1468,12 @@ export const getVideo = async (req, res) => {
 
 export const reactPost = async (req, res) => {
     try {
-        // userId from req.user.id
         const userId = req.user?.id;
         if (!userId) {
             return res.status(400).json({ success: false, message: "Thiếu userId" });
         }
+        const avatar = req.user?.avatar;
+        const name = req.user?.name;
 
         const { postId, react } = req.body;
 
@@ -1071,57 +1481,102 @@ export const reactPost = async (req, res) => {
             return res.status(400).json({ success: false, message: "Thiếu postId" });
         }
 
-        // Nếu react là null hoặc undefined thì xóa tất cả các react của user cho bài post này
-        if (react === null || react === undefined) {
-            await postReactModel.deleteMany({ post: postId, user: userId });
-            return res.status(200).json({
-                success: true,
-                message: "Đã xóa react",
-                type: "unreact"
-            });
-        }
-
+        // Các kiểu react hợp lệ
         const validReacts = ["like", "love", "fun", "sad", "angry"];
-        if (!validReacts.includes(react)) {
-            return res.status(400).json({ success: false, message: "Kiểu react không hợp lệ" });
-        }
+
+        let operationType = null;
+        let operationMessage = "";
+        let currentReact = null;
 
         const postExisted = await postModel.findById(postId);
         if (!postExisted) {
             return res.status(404).json({ success: false, message: "Không tìm thấy bài viết" });
         }
 
+        // Tìm react đã tồn tại
         const existingReact = await postReactModel.findOne({ post: postId, user: userId });
 
-        if (existingReact) {
-            existingReact.react = react;
-            await existingReact.save();
-            return res.status(200).json({
-                success: true,
-                message: "Đã cập nhật react",
-                type: "update",
-                react: existingReact.react
-            });
+        // Nếu react là undefined hoặc null hoặc rỗng: xóa react
+        if (typeof react === "undefined" || react === null || react === "") {
+            await postReactModel.deleteMany({ post: postId, user: userId });
+            operationType = "unreact";
+            operationMessage = "Đã xóa react";
+            // notifyReact KHÔNG truyền reactType khi xóa
+            await notifyReact({ userId: postExisted.user, fromId: userId, postId, avatar, name });
         } else {
-            const newReact = new postReactModel({
-                post: postId,
-                user: userId,
-                react: react
-            });
-            await newReact.save();
-            return res.status(200).json({
-                success: true,
-                message: "React thành công",
-                type: "add",
-                react: newReact.react
-            });
+            // Check kiểu react không hợp lệ (không nằm trong validReacts)
+            if (!validReacts.includes(react)) {
+                return res.status(400).json({ success: false, message: "Kiểu react không hợp lệ" });
+            }
+
+            // Nếu đã tồn tại react trước đó và giống với cảm xúc hiện tại thì return luôn
+            if (existingReact && existingReact.react === react) {
+                // Đếm react các loại
+                const allReacts = await postReactModel.find({ post: postId });
+                const reactCounts = validReacts.reduce((acc, type) => {
+                    acc[type] = allReacts.filter(r => r.react === type).length;
+                    return acc;
+                }, {});
+                currentReact = existingReact.react;
+                return res.status(200).json({
+                    success: true,
+                    message: "Đã thả cảm xúc giống trước đó",
+                    type: "same",
+                    react: currentReact,
+                    reactCounts
+                });
+            }
+
+            if (existingReact) {
+                // Nếu react mới KHÁC react cũ => cập nhật
+                existingReact.react = react;
+                await existingReact.save();
+                operationType = "update";
+                operationMessage = "Đã cập nhật react";
+                // notifyReact CÓ truyền reactType khi update
+                await notifyReact({ userId: postExisted.user, fromId: userId, postId, reactType: react, avatar, name });
+            } else {
+                // Thêm react mới
+                const newReact = new postReactModel({
+                    post: postId,
+                    user: userId,
+                    react: react
+                });
+                await newReact.save();
+                operationType = "add";
+                operationMessage = "React thành công";
+                // notifyReact CÓ truyền reactType khi thêm mới
+                console.log("notifyReact call (add):", { userId: postExisted.user, fromId: userId, postId, reactType: react, avatar, name });
+                await notifyReact({ userId: postExisted.user, fromId: userId, postId, reactType: react, avatar, name });
+            }
         }
+
+        // Trả về react của post đó (toàn bộ react count mỗi loại + react của user hiện tại)
+        // Đếm react các loại
+        const allReacts = await postReactModel.find({ post: postId });
+        const reactCounts = validReacts.reduce((acc, type) => {
+            acc[type] = allReacts.filter(r => r.react === type).length;
+            return acc;
+        }, {});
+        // react của user này (hoặc null nếu không)
+        const userReactDoc = await postReactModel.findOne({ post: postId, user: userId });
+        currentReact = userReactDoc ? userReactDoc.react : null;
+
+        return res.status(200).json({
+            success: true,
+            message: operationMessage,
+            type: operationType,
+            react: currentReact,
+            reactCounts
+        });
     } catch (error) {
         console.error(error);
-        res.status(500).json({ success: false, message: error && error.message ? error.message : String(error) });
+        res.status(500).json({
+            success: false,
+            message: error && error.message ? error.message : String(error)
+        });
     }
 };
-
 
 export const commentPost = async (req, res) => {
     try {
@@ -1129,6 +1584,9 @@ export const commentPost = async (req, res) => {
         if (!userId) {
             return res.status(400).json({ success: false, message: "Thiếu userId" });
         }
+
+        const avatar = req.user?.avatar;
+        const name = req.user?.name;
 
         const { postId, comment } = req.body;
         if (!postId || !comment || typeof comment !== "string" || !comment.trim()) {
@@ -1153,6 +1611,13 @@ export const commentPost = async (req, res) => {
             }
         ]);
 
+        // Gửi notification khi comment
+        try {
+            await notifyComment({ userId: post.user, fromId: userId, postId, avatar, name });
+        } catch (err) {
+            console.error("notifyComment error:", err);
+        }
+
         return res.status(200).json({
             success: true,
             message: "Bình luận thành công",
@@ -1170,10 +1635,159 @@ export const commentPost = async (req, res) => {
     }
 };
 
+// Xóa bình luận
+export const deleteComment = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        const avatar = req.user?.avatar;
+        const name = req.user?.name;
+
+        if (!userId) {
+            return res.status(400).json({ success: false, message: "Thiếu userId" });
+        }
+
+        const commentId = req.body?.commentId || req.query?.commentId;
+
+        if (!commentId) {
+            return res.status(400).json({ success: false, message: "Thiếu commentId" });
+        }
+
+        const comment = await postCommentModel.findById(commentId);
+        if (!comment) {
+            return res.status(404).json({ success: false, message: "Không tìm thấy bình luận" });
+        }
+
+        // User chỉ được xóa bình luận của chính mình, hoặc ROLE ADMIN (cái này mở rộng sau)
+        if (String(comment.user) !== String(userId)) {
+            return res.status(403).json({ success: false, message: "Bạn không có quyền xóa bình luận này" });
+        }
+
+        // Xóa notification liên quan
+        try {
+            // Cần biết chủ post là ai
+            const post = await postModel.findById(comment.post);
+            if (post && post.user) {
+                await deleteCommentNotification({ userId: post.user, fromId: userId, postId: comment.post, avatar, name });
+            }
+        } catch (err) {
+            console.error("deleteCommentNotification error:", err);
+        }
+
+        await postCommentModel.deleteOne({ _id: commentId });
+
+        return res.status(200).json({
+            success: true,
+            message: "Đã xóa bình luận"
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, message: error && error.message ? error.message : String(error) });
+    }
+};
+
+export const loadComment = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(400).json({ success: false, message: "Thiếu userId" });
+        }
+
+        const { postId, time, id } = req.query;
+        const limit = 10;
+
+        if (!postId) {
+            return res.status(400).json({ success: false, message: "Thiếu postId" });
+        }
+
+        const limitInt = parseInt(limit, 10) || 10;
+
+        // Cursor paging: Nếu có time (createdAt) và id thì dùng cả 2 cho chuẩn
+        let filter = { post: postId };
+        if (time && id) {
+            filter = {
+                ...filter,
+                $or: [
+                    { createdAt: { $lt: new Date(time) } },
+                    {
+                        createdAt: new Date(time),
+                        _id: { $lt: id }
+                    }
+                ]
+            };
+        } else if (time) {
+            filter = { ...filter, createdAt: { $lt: new Date(time) } };
+        }
+
+        const comments = await postCommentModel.find(filter)
+            .sort({ createdAt: -1, _id: -1 })
+            .limit(limitInt)
+            .lean();
+
+        // ---- Thêm số lượng tổng comment cho post ----
+        const totalComments = await postCommentModel.countDocuments({ post: postId });
+
+        const userIds = comments.map(c => c.user?.toString()).filter(Boolean);
+        const uniqueUserIds = Array.from(new Set(userIds));
+        console.log(uniqueUserIds)
+
+        // Nạp thêm userid và user để map
+        const bioDocs = await bioModel.find(
+            { userid: { $in: uniqueUserIds } },
+            'avatar avatarCroppedArea userid'
+        ).lean();
+        console.log("bioDocs", bioDocs);
+
+        const profileDocs = await profileModel.find(
+            { user: { $in: uniqueUserIds } },
+            'username name user -_id'
+        ).lean();
+
+        const bioMap = {};
+        bioDocs.forEach(b => { bioMap[b.userid?.toString()] = b; });
+        const nameMap = {};
+        const usernameMap = {};
+        profileDocs.forEach(p => {
+            nameMap[p.user?.toString()] = p.name;
+            usernameMap[p.user?.toString()] = p.username;
+        });
+
+        const formattedComments = comments.map(c => {
+            const uid = c.user?.toString();
+            return {
+                ...c,
+                user: {
+                    _id: uid,
+                    name: nameMap[uid] || "",
+                    username: usernameMap[uid] || "",
+                    avatar: bioMap[uid]?.avatar || "",
+                    avatarCroppedArea: bioMap[uid]?.avatarCroppedArea || null,
+                }
+            };
+        });
+
+        // Infinite scroll KHÔNG cần trả về total (O(n)), chỉ client cần total khi mở post lần đầu (có thể đọc ở post.commentCount nếu cần)
+        return res.status(200).json({
+            success: true,
+            data: formattedComments,
+            total: totalComments,
+            pagination: {
+                limit: limitInt
+            }
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, message: error && error.message ? error.message : String(error) });
+    }
+};
+
+
 
 export const sharePost = async (req, res) => {
     try {
         const userId = req.user?.id;
+        const avatar = req.user?.avatar;
+        const name = req.user?.name;
+
         if (!userId) {
             return res.status(400).json({ success: false, message: "Thiếu userId" });
         }
@@ -1196,6 +1810,7 @@ export const sharePost = async (req, res) => {
 
         if (existingShare) {
             await postShareModel.deleteOne({ _id: existingShare._id });
+            await deleteShareNotification({ userId: post.user, fromId: userId, postId, avatar, name });
             return res.status(200).json({
                 success: true,
                 message: "Đã huỷ chia sẻ bài viết",
@@ -1207,6 +1822,8 @@ export const sharePost = async (req, res) => {
             user: userId,
             post: postId
         });
+
+        await notifyShare({ userId: post.user, fromId: userId, postId, avatar, name });
 
         return res.status(200).json({
             success: true,
@@ -1271,17 +1888,59 @@ export const loadCountReact = async (req, res) => {
 export const reportPost = async (req, res) => {
     try {
         const { postId } = req.body;
+        const userId = req.user?.id;
         if (!postId) {
             return res.status(400).json({ success: false, message: "Thiếu postId" });
+        }
+        if (!userId) {
+            return res.status(401).json({ success: false, message: "Chưa đăng nhập hoặc thiếu thông tin user." });
+        }
+
+        // Kiểm tra đã từng report bài viết này chưa
+        const existedReport = await postReportedModel.findOne({ postId, userId });
+        if (existedReport) {
+            return res.status(400).json({ success: false, message: "Bạn đã báo cáo bài viết này trước đó." });
         }
 
         const newReport = new postReportedModel({
             postId,
-            reportedAt: new Date(),
+            userId,
         });
         await newReport.save();
 
         res.status(200).json({ success: true, message: "Đã báo cáo bài viết thành công." });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, message: error && error.message ? error.message : String(error) });
+    }
+};
+
+
+export const reportComment = async (req, res) => {
+    try {
+        // Lấy dữ liệu từ body - để linh động với client gửi qua
+        const { commentId, postId, userId } = req.body;
+
+        console.log("reportComment body:", { commentId, postId, userId });
+        if (!commentId || !postId || !userId) {
+            return res.status(400).json({ success: false, message: "Thiếu thông tin commentId, postId hoặc userId" });
+        }
+
+        // Kiểm tra đã report comment này chưa (theo commentId + userId)
+        const existedReport = await commentReportedModel.findOne({ commentId, userId });
+        if (existedReport) {
+            return res.status(400).json({ success: false, message: "Bạn đã báo cáo bình luận này trước đó." });
+        }
+
+        // Lưu báo cáo
+        const newReport = new commentReportedModel({
+            commentId,
+            postId,
+            userId,
+        });
+        await newReport.save();
+
+        res.status(200).json({ success: true, message: "Đã báo cáo bình luận thành công." });
     } catch (error) {
         console.error(error);
         res.status(500).json({ success: false, message: error && error.message ? error.message : String(error) });

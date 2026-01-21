@@ -1,9 +1,13 @@
 "use client";
 import HomePost from "@/components/ui/HomePost";
+import LeftSide from "./aside/LeftSide";
+import RightSide from "./aside/RightSide";
+import { useEffect } from "react";
 
 export default function HomePage() {
+
   return (
-    <div className="min-h-screen bg-black overflow-x-auto">
+    <div className="min-h-screen bg-black">
       <main
         className="
           grid
@@ -20,10 +24,11 @@ export default function HomePage() {
         "
       >
         {/* LEFT */}
-        <aside className="flex justify-end bg-indigo-100 p-4 max-[1155px]:hidden">
-          <div className="text-right font-semibold text-indigo-700">
-            Bên trái
-          </div>
+        <aside
+          className="flex justify-end p-4 pr-14 max-[1155px]:hidden"
+          style={{ position: "sticky", top: 0, alignSelf: "flex-start", height: "fit-content", zIndex: 100 }}
+        >
+          <RightSide />
         </aside>
 
         {/* CENTER */}
@@ -37,7 +42,7 @@ export default function HomePage() {
             className="
               w-full min-w-[680px] max-w-[680px] mx-auto
               max-[680px]:min-w-[475px]
-              max-[680px]:w-full
+              max-[680px]:w-full pt-3
             "
           >
             <HomePost />
@@ -45,10 +50,11 @@ export default function HomePage() {
         </section>
 
         {/* RIGHT */}
-        <aside className="flex justify-start bg-emerald-100 p-4 max-[905px]:hidden">
-          <div className="text-left font-semibold text-emerald-600">
-            Bên phải
-          </div>
+        <aside
+          className="flex justify-start relative p-4 pl-14 max-[905px]:hidden"
+          style={{ position: "sticky", top: 0, alignSelf: "flex-start", height: "fit-content", zIndex: 20 }}
+        >
+          <LeftSide />
         </aside>
       </main>
     </div>

@@ -13,3 +13,9 @@ export async function apiUpdateProfile(formData: FormData) {
     });
     return response;
 }
+
+
+export async function apiGetCoverHome() {
+    const response = await instance.post("/bio/getcoverhome");
+    return response.data;
+}

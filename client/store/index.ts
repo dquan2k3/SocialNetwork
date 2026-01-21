@@ -1,11 +1,13 @@
 import { configureStore } from "@reduxjs/toolkit";
 import authReducer from "./slices/authSlice";
-import userReducer from "./slices/userSlice"
+import userReducer from "./slices/userSlice";
+import cacheConversationsReducer from "./slices/cacheConversationSlice";
 
 export const store = configureStore({
   reducer: {
     auth: authReducer,
     user: userReducer,
+    cacheConversations: cacheConversationsReducer,
   },
   devTools: process.env.NODE_ENV !== "production",
 });

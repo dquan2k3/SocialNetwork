@@ -6,6 +6,7 @@ import {
     apiCancelRelationship,
     apiAcceptFriendRequest,
     apiRejectFriendRequest,
+    apiBlockUser,
 } from "@/api/relationship.api";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -15,14 +16,27 @@ import {
     faMessage,
     faAngleDown,
     faExclamationTriangle,
+    faBan,
+    faUnlockAlt,
 } from "@fortawesome/free-solid-svg-icons";
 import { useChatDock } from "@/app/providers/ChatDockProvider";
+import { getCloudinaryImageLink } from "@/helper/croppedImageHelper";
 
 type Relationship = {
-    status: "pending" | "accepted" | "rejected" | "blocked";
     requester: string;
     recipient: string;
+    status: "pending" | "accepted" | "rejected" | "blocked";
+    message?: string;
+    acceptedAt?: string;
+    wasRejected?: boolean;
+    // blockedBy?: string; // remove usage as noted
+    isFollow?: boolean;
+    interactionCount?: number;
+    lastInteractionAt?: string;
     _id: string;
+    createdAt?: string;
+    updatedAt?: string;
+    __v?: number;
 };
 
 interface RelationshipButtonProps {
@@ -31,7 +45,7 @@ interface RelationshipButtonProps {
     userId: string;
     name?: string;
     username?: string;
-    avatar?: string;
+    avatar?: any;
     avatarCroppedArea?: any;
     onRelationshipChange?: (userId: string, relationship: Relationship | null) => void;
 }
@@ -56,156 +70,156 @@ const RequestFriendModal: React.FC<{
     username,
     defaultMessage = "Kết bạn với mình nhé!",
 }) => {
-        const [message, setMessage] = useState(defaultMessage);
+    const [message, setMessage] = useState(defaultMessage);
 
-        useEffect(() => {
-            if (open) {
-                document.body.style.overflow = "hidden";
-            } else {
-                document.body.style.overflow = "";
-            }
-            return () => {
-                document.body.style.overflow = "";
-            };
-        }, [open]);
+    useEffect(() => {
+        if (open) {
+            document.body.style.overflow = "hidden";
+        } else {
+            document.body.style.overflow = "";
+        }
+        return () => {
+            document.body.style.overflow = "";
+        };
+    }, [open]);
 
-        useEffect(() => {
-            setMessage(defaultMessage);
-        }, [open, defaultMessage]);
+    useEffect(() => {
+        setMessage(defaultMessage);
+    }, [open, defaultMessage]);
 
-        if (!open) return null;
+    if (!open) return null;
 
-        return (
-            <div
-                className="fixed inset-0 z-[9999] flex items-center justify-center transition"
+    return (
+        <div
+            className="fixed inset-0 z-[9999] flex items-center justify-center transition"
+            style={{
+                background: "rgba(30,30,40,0.92)",
+                animation: "fadeIn 0.18s",
+            }}
+        >
+            <div className="text-white rounded-2xl shadow-xl p-0 min-w-[390px] relative max-w-full w-full mx-3"
                 style={{
-                    background: "rgba(30,30,40,0.92)",
-                    animation: "fadeIn 0.18s",
+                    background: "#252728",
+                    boxShadow: "0 6px 32px 0 rgba(32,38,54,0.65)",
+                    maxWidth: 400,
+                    border: '1px solid #30315b'
                 }}
             >
-                <div className="text-white rounded-2xl shadow-xl p-0 min-w-[390px] relative max-w-full w-full mx-3"
-                    style={{
-                        background: "#252728",
-                        boxShadow: "0 6px 32px 0 rgba(32,38,54,0.65)",
-                        maxWidth: 400,
-                        border: '1px solid #30315b'
-                    }}
-                >
-                    {/* Header */}
-                    <div className="flex flex-col items-center justify-center pt-7 pb-3 px-8 relative">
-                        <button
-                            type="button"
-                            className="absolute right-4 top-4 w-[36px] h-[36px] flex items-center justify-center rounded-full bg-[#3B3D3E] hover:bg-[#4F5152] text-[#b0b3b8] cursor-pointer"
-                            title="Hủy"
-                            style={{ fontSize: 20 }}
-                            aria-label="Đóng"
-                            disabled={loading}
-                            onClick={onClose}
-                        >
-                            <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                                <path
-                                    d="M14.53 5.47a.75.75 0 0 0-1.06 0L10 8.94 6.53 5.47A.75.75 0 1 0 5.47 6.53L8.94 10l-3.47 3.47a.75.75 0 1 0 1.06 1.06L10 11.06l3.47 3.47a.75.75 0 0 0 1.06-1.06L11.06 10l3.47-3.47a.75.75 0 0 0 0-1.06z"
-                                    fill="currentColor"
-                                />
-                            </svg>
-                        </button>
-                        <div className="mb-3">
-                            {avatar ? (
-                                <img
-                                    src={avatar}
-                                    alt="Avatar"
-                                    className="w-20 h-20 rounded-full object-cover border-4 border-blue-400 shadow-lg"
-                                    style={{
-                                        background:
-                                            "linear-gradient(120deg, #36d1dc 0%, #5b86e5 100%)",
-                                    }}
-                                />
-                            ) : (
-                                <div className="w-20 h-20 rounded-full bg-blue-900 flex items-center justify-center text-3xl font-bold text-blue-300 border-4 border-blue-400 shadow-lg">
-                                    {name ? (name[0] || "").toUpperCase() : <FontAwesomeIcon icon={faUserPlus} />}
-                                </div>
-                            )}
-                        </div>
-                        <div className="font-bold text-xl pb-1 text-white">
-                            Kết bạn với {name || username || "người dùng"}
-                        </div>
-                        {username && (
-                            <div className="text-blue-300 text-base font-medium mb-1">
-                                @{username}
+                {/* Header */}
+                <div className="flex flex-col items-center justify-center pt-7 pb-3 px-8 relative">
+                    <button
+                        type="button"
+                        className="absolute right-4 top-4 w-[36px] h-[36px] flex items-center justify-center rounded-full bg-[#3B3D3E] hover:bg-[#4F5152] text-[#b0b3b8] cursor-pointer"
+                        title="Hủy"
+                        style={{ fontSize: 20 }}
+                        aria-label="Đóng"
+                        disabled={loading}
+                        onClick={onClose}
+                    >
+                        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                            <path
+                                d="M14.53 5.47a.75.75 0 0 0-1.06 0L10 8.94 6.53 5.47A.75.75 0 1 0 5.47 6.53L8.94 10l-3.47 3.47a.75.75 0 1 0 1.06 1.06L10 11.06l3.47 3.47a.75.75 0 0 0 1.06-1.06L11.06 10l3.47-3.47a.75.75 0 0 0 0-1.06z"
+                                fill="currentColor"
+                            />
+                        </svg>
+                    </button>
+                    <div className="mb-3">
+                        {avatar ? (
+                            <img
+                                src={avatar}
+                                alt="Avatar"
+                                className="w-20 h-20 rounded-full object-cover border-4 border-blue-400 shadow-lg"
+                                style={{
+                                    background:
+                                        "linear-gradient(120deg, #36d1dc 0%, #5b86e5 100%)",
+                                }}
+                            />
+                        ) : (
+                            <div className="w-20 h-20 rounded-full bg-blue-900 flex items-center justify-center text-3xl font-bold text-blue-300 border-4 border-blue-400 shadow-lg">
+                                {name ? (name[0] || "").toUpperCase() : <FontAwesomeIcon icon={faUserPlus} />}
                             </div>
                         )}
-                        <div className="text-gray-300 text-base font-normal mb-2">
-                            Hãy gửi lời nhắn đến {name || "người này"} nhé!
+                    </div>
+                    <div className="font-bold text-xl pb-1 text-white">
+                        Kết bạn với {name || username || "người dùng"}
+                    </div>
+                    {username && (
+                        <div className="text-blue-300 text-base font-medium mb-1">
+                            @{username}
                         </div>
-                    </div>
-                    {/* Content */}
-                    <div className="px-8 pb-0 pt-1">
-                        <textarea
-                            className="w-full border-none"
-                            style={{
-                                background: "#17181a", // Màu đen đậm hơn
-                                color: "#fff",
-                                borderRadius: "0.75rem",
-                                padding: "1rem",
-                                fontSize: "1rem",
-                                minHeight: 64,
-                                boxSizing: "border-box",
-                                resize: "none", // Ẩn nút mở rộng của textarea
-                            }}
-                            rows={4}
-                            placeholder="Bạn muốn gửi lời nhắn nào cho lời mời kết bạn?"
-                            value={message}
-                            maxLength={100}
-                            onChange={e => setMessage(e.target.value)}
-                            disabled={loading}
-                        />
-                        <div className="text-gray-400 text-xs text-right mt-2">{message.length}/100</div>
-                    </div>
-                    {/* Footer actions */}
-                    <div
-                        className="flex justify-end gap-3 px-8 py-5 border-t mt-5 rounded-b-2xl"
-                        style={{
-                            borderTop: "1px solid #313233",
-                            background: "#232425"
-                        }}
-                    >
-                        <button
-                            className="px-4 py-2 rounded-lg font-semibold border border-gray-500 transition-colors duration-200 hover:bg-[#26282c] hover:border-gray-400"
-                            style={{
-                                background: "#161718",
-                                color: "#c6c8c9",
-                                cursor: "pointer"
-                            }}
-                            onClick={onClose}
-                            disabled={loading}
-                            type="button"
-                        >
-                            Hủy
-                        </button>
-                        <button
-                            className="px-4 py-2 rounded-lg font-semibold text-white transition shadow-lg disabled:opacity-60 hover:brightness-110 hover:shadow-xl"
-                            style={{
-                                background: "linear-gradient(90deg, #3b82f6 0%, #2563eb 100%)",
-                                cursor: "pointer"
-                            }}
-                            onClick={() => onSend(message)}
-                            disabled={loading || !message.trim()}
-                            type="button"
-                        >
-                            {loading ? (
-                                <span>
-                                    <svg className="animate-spin inline-block mr-1" width="18" height="18" viewBox="0 0 50 50"><circle className="opacity-30" cx="25" cy="25" r="20" stroke="#E0E7EF" strokeWidth="5" fill="none" /><circle className="opacity-80" cx="25" cy="25" r="20" stroke="#3B82F6" strokeWidth="5" strokeDasharray="31.4 188.4" fill="none" /></svg>
-                                    Đang gửi...
-                                </span>
-                            ) : (
-                                <>Gửi</>
-                            )}
-                        </button>
+                    )}
+                    <div className="text-gray-300 text-base font-normal mb-2">
+                        Hãy gửi lời nhắn đến {name || "người này"} nhé!
                     </div>
                 </div>
+                {/* Content */}
+                <div className="px-8 pb-0 pt-1">
+                    <textarea
+                        className="w-full border-none"
+                        style={{
+                            background: "#17181a", // Màu đen đậm hơn
+                            color: "#fff",
+                            borderRadius: "0.75rem",
+                            padding: "1rem",
+                            fontSize: "1rem",
+                            minHeight: 64,
+                            boxSizing: "border-box",
+                            resize: "none", // Ẩn nút mở rộng của textarea
+                        }}
+                        rows={4}
+                        placeholder="Bạn muốn gửi lời nhắn nào cho lời mời kết bạn?"
+                        value={message}
+                        maxLength={100}
+                        onChange={e => setMessage(e.target.value)}
+                        disabled={loading}
+                    />
+                    <div className="text-gray-400 text-xs text-right mt-2">{message.length}/100</div>
+                </div>
+                {/* Footer actions */}
+                <div
+                    className="flex justify-end gap-3 px-8 py-5 border-t mt-5 rounded-b-2xl"
+                    style={{
+                        borderTop: "1px solid #313233",
+                        background: "#232425"
+                    }}
+                >
+                    <button
+                        className="px-4 py-2 rounded-lg font-semibold border border-gray-500 transition-colors duration-200 hover:bg-[#26282c] hover:border-gray-400 whitespace-nowrap"
+                        style={{
+                            background: "#161718",
+                            color: "#c6c8c9",
+                            cursor: "pointer"
+                        }}
+                        onClick={onClose}
+                        disabled={loading}
+                        type="button"
+                    >
+                        Hủy
+                    </button>
+                    <button
+                        className="px-4 py-2 rounded-lg font-semibold text-white transition shadow-lg disabled:opacity-60 hover:brightness-110 hover:shadow-xl whitespace-nowrap"
+                        style={{
+                            background: "linear-gradient(90deg, #3b82f6 0%, #2563eb 100%)",
+                            cursor: "pointer"
+                        }}
+                        onClick={() => onSend(message)}
+                        disabled={loading || !message.trim()}
+                        type="button"
+                    >
+                        {loading ? (
+                            <span>
+                                <svg className="animate-spin inline-block mr-1" width="18" height="18" viewBox="0 0 50 50"><circle className="opacity-30" cx="25" cy="25" r="20" stroke="#E0E7EF" strokeWidth="5" fill="none" /><circle className="opacity-80" cx="25" cy="25" r="20" stroke="#3B82F6" strokeWidth="5" strokeDasharray="31.4 188.4" fill="none" /></svg>
+                                Đang gửi...
+                            </span>
+                        ) : (
+                            <>Gửi</>
+                        )}
+                    </button>
+                </div>
             </div>
-        );
-    };
+        </div>
+    );
+};
 
 // Confirm modal: nút xóa/bỏ kết bạn sẽ là màu đỏ, nút còn lại là màu xám
 const ConfirmModal: React.FC<{
@@ -250,7 +264,7 @@ const ConfirmModal: React.FC<{
                 <div className="mb-5">{message}</div>
                 <div className="flex justify-end gap-3">
                     <button
-                        className="px-4 py-2 rounded font-semibold transition-colors duration-200"
+                        className="px-4 py-2 rounded font-semibold transition-colors duration-200 whitespace-nowrap"
                         style={{
                             background: "#444",
                             color: "#fff",
@@ -266,7 +280,7 @@ const ConfirmModal: React.FC<{
                         {rejectLabel}
                     </button>
                     <button
-                        className="px-4 py-2 rounded font-semibold transition-colors duration-200 hover:bg-[#ff5471]"
+                        className="px-4 py-2 rounded font-semibold transition-colors duration-200 hover:bg-[#ff5471] whitespace-nowrap"
                         style={{
                             background: "#ff3b53",
                             color: "#fff",
@@ -294,9 +308,9 @@ const RelationshipButton: React.FC<RelationshipButtonProps> = ({
     name,
     username,
     avatar,
-    avatarCroppedArea,
     onRelationshipChange,
 }) => {
+
     const { openChat } = useChatDock();
     const [friendLoading, setFriendLoading] = useState<Record<string, boolean>>({});
     const [friendDropdownOpen, setFriendDropdownOpen] = useState<string | null>(null);
@@ -308,6 +322,9 @@ const RelationshipButton: React.FC<RelationshipButtonProps> = ({
     const [showRequestFriendModal, setShowRequestFriendModal] = useState(false); // Show modal gửi lời mời
     const [requesting, setRequesting] = useState(false); // Loading state for request friend
 
+    // STATE for showing block button "dropdown" next to "Kết bạn"
+    const [addFriendDropdownOpen, setAddFriendDropdownOpen] = useState(false);
+
     useEffect(() => {
         setLocalRelationship(relationship);
     }, [relationship]);
@@ -315,12 +332,7 @@ const RelationshipButton: React.FC<RelationshipButtonProps> = ({
     const updateRelationship = (userId: string, newRelationship: Relationship | null) => {
         setLocalRelationship(newRelationship);
         if (typeof onRelationshipChange === "function") {
-            let rel: Relationship | null = null;
-            if (newRelationship && typeof newRelationship === "object") {
-                const { recipient, requester, status, _id } = newRelationship;
-                rel = { recipient, requester, status, _id };
-            }
-            onRelationshipChange(userId, rel);
+            onRelationshipChange(userId, newRelationship);
         }
     };
 
@@ -467,6 +479,46 @@ const RelationshipButton: React.FC<RelationshipButtonProps> = ({
         setRequesting(false);
     };
 
+    // --- Block/Unblock logic handling ---
+    // Khi bị chặn, gửi request blockUser và dùng response relationship để setLocalRelationship, không dùng fake id.
+    const handleBlock = async (userId: string) => {
+        try {
+            const res = await apiBlockUser(userId);
+            // res sẽ như: {success: true, message: "...", relationship: {...}}
+            if (isApiResponse(res) && res.success) {
+                if (res.relationship) {
+                    setLocalRelationship(res.relationship);
+                }
+                setSimpleMessage(null);
+            } else {
+                setSimpleMessage(res?.message || "Không thể chặn người dùng.");
+            }
+        } catch (e: any) {
+            setSimpleMessage("Không thể chặn người dùng.");
+            console.error("Error blocking user:", e);
+        }
+    };
+
+    const handleUnblock = async (userId: string) => {
+        // Không fake relationship id, chỉ unblock nếu có thật
+        const relationshipId = localRelationship?._id;
+        if (!relationshipId) {
+            setSimpleMessage("Không tìm thấy quan hệ chặn để hủy.");
+            return;
+        }
+        setFriendLoading((fl) => ({ ...fl, unblock: true }));
+        setSimpleMessage(null);
+        try {
+            await apiCancelRelationship(relationshipId);
+            setLocalRelationship(null);
+            setSimpleMessage(null);
+        } catch (e) {
+            setSimpleMessage("Không thể hủy chặn người dùng.");
+            console.error("Error unblocking user:", e);
+        }
+        setFriendLoading((fl) => ({ ...fl, unblock: false }));
+    };
+
     const friendButtonBaseStyle = {
         minWidth: 112,
         cursor: "pointer",
@@ -488,27 +540,70 @@ const RelationshipButton: React.FC<RelationshipButtonProps> = ({
             <div className="text-red-500 pb-2 w-full">{children}</div>
         </div>;
 
-    // ---- Các đoạn return bên dưới được chỉnh sửa để luôn đặt message trong div cha .flex.flex-col như trạng thái "pending" ---- //
-
+    // Thêm nút "Chặn" khi hover vào nút kết bạn, hiện ra dưới dạng một dropdown giống nút "Hủy kết bạn"
+    // Ấn chặn sẽ set state localRelationship sang blocked (requester: myId)
     if (!localRelationship) {
         return (
             <div className="flex flex-col">
                 {simpleMessage && (
                     <ErrorMessageAboveButtons>{simpleMessage}</ErrorMessageAboveButtons>
                 )}
-                <div className="flex gap-2 items-center">
-                    <button
-                        type="button"
-                        className="flex items-center gap-2 text-white px-4 py-2 rounded-lg font-semibold transition disabled:opacity-60"
-                        style={friendButtonBaseStyle}
-                        disabled={!!friendLoading[userId]}
-                        onClick={() => setShowRequestFriendModal(true)}
-                        onMouseOver={friendButtonHoverHandler}
-                        onMouseOut={friendButtonOutHandler}
+                <div
+                    className="flex gap-2 items-center"
+                >
+                    <div className="relative inline-block"
+                        onMouseEnter={() => setAddFriendDropdownOpen(true)}
+                        onMouseLeave={() => setAddFriendDropdownOpen(false)}
+                        tabIndex={-1}
                     >
-                        <FontAwesomeIcon icon={faUserPlus} />
-                        Kết bạn
-                    </button>
+                        <button
+                            type="button"
+                            className="flex items-center gap-2 text-white px-4 py-2 rounded-lg font-semibold transition disabled:opacity-60 whitespace-nowrap"
+                            style={friendButtonBaseStyle}
+                            disabled={!!friendLoading[userId]}
+                            onClick={() => setShowRequestFriendModal(true)}
+                            onMouseOver={friendButtonHoverHandler}
+                            onMouseOut={friendButtonOutHandler}
+                        >
+                            <FontAwesomeIcon icon={faUserPlus} />
+                            <span className="whitespace-nowrap">Kết bạn</span>
+                            {/* No faAngleDown icon here */}
+                        </button>
+                        {/* Block option dropdown, chỉ hiện khi hover */}
+                        <div
+                            className={`absolute left-1/2 -translate-x-1/2 mt-1 min-w-[110px] border rounded-lg shadow-md z-10 transition-all duration-200 ${addFriendDropdownOpen ? "opacity-100 visible translate-y-0" : "opacity-0 invisible -translate-y-2"
+                                }`}
+                            style={{
+                                top: "100%",
+                                background: "#252728",
+                                border: "1px solid #393b3b",
+                                color: "#fff"
+                            }}
+                        >
+                            <button
+                                type="button"
+                                className="relationship-block-btn w-full px-4 py-2 text-left whitespace-nowrap transition duration-200 rounded-lg group"
+                                onClick={() => {
+                                    setAddFriendDropdownOpen(false);
+                                    handleBlock(userId);
+                                }}
+                                style={{
+                                    whiteSpace: "nowrap",
+                                    cursor: "pointer",
+                                    color: "#fff",
+                                    border: "1.5px solid #ba3f54",
+                                    background: "transparent"
+                                }}
+                            >
+                                <FontAwesomeIcon
+                                    icon={faBan}
+                                    className="mr-2"
+                                    style={{ color: "#e63a44" }}
+                                />
+                                <span className="whitespace-nowrap">Chặn</span>
+                            </button>
+                        </div>
+                    </div>
                     {MessageButton}
                 </div>
                 <RequestFriendModal
@@ -520,6 +615,21 @@ const RelationshipButton: React.FC<RelationshipButtonProps> = ({
                     avatar={avatar}
                     username={username}
                 />
+                {/* CSS cho hiệu ứng hover của nút chặn */}
+                <style jsx global>{`
+                  .relationship-block-btn:hover,
+                  .relationship-block-btn:focus {
+                    background: #fff !important;
+                    color: #e63a44 !important;
+                  }
+                  .relationship-block-btn:hover .fa-ban,
+                  .relationship-block-btn:focus .fa-ban {
+                    color: #e63a44 !important;
+                  }
+                  .relationship-block-btn:active {
+                    background: #fee3e6 !important;
+                  }
+                `}</style>
             </div>
         );
     }
@@ -536,7 +646,7 @@ const RelationshipButton: React.FC<RelationshipButtonProps> = ({
                     <div className="flex gap-2 items-center">
                         <button
                             type="button"
-                            className="flex items-center gap-2 text-white px-4 py-2 rounded-lg font-semibold transition disabled:opacity-60"
+                            className="flex items-center gap-2 text-white px-4 py-2 rounded-lg font-semibold transition disabled:opacity-60 whitespace-nowrap"
                             style={{
                                 ...friendButtonBaseStyle,
                                 background: "#ef4444",
@@ -551,7 +661,7 @@ const RelationshipButton: React.FC<RelationshipButtonProps> = ({
                             }}
                         >
                             <FontAwesomeIcon icon={faUserXmark} />
-                            Hủy lời mời
+                            <span className="whitespace-nowrap">Hủy lời mời</span>
                         </button>
                         {MessageButton}
                     </div>
@@ -622,7 +732,7 @@ const RelationshipButton: React.FC<RelationshipButtonProps> = ({
                     <div className="relative inline-block friend-dropdown-group">
                         <button
                             type="button"
-                            className="text-white font-semibold py-2 px-4 rounded-lg flex items-center gap-2 focus:outline-none transition"
+                            className="text-white font-semibold py-2 px-4 rounded-lg flex items-center gap-2 focus:outline-none transition whitespace-nowrap"
                             style={friendButtonBaseStyle}
                             onClick={e => {
                                 e.stopPropagation();
@@ -634,7 +744,7 @@ const RelationshipButton: React.FC<RelationshipButtonProps> = ({
                             onMouseOut={friendButtonOutHandler}
                         >
                             <FontAwesomeIcon icon={faUserCheck} />
-                            Bạn bè
+                            <span className="whitespace-nowrap">Bạn bè</span>
                             <FontAwesomeIcon
                                 icon={faAngleDown}
                                 className={`transition-transform duration-200 ${friendDropdownOpen === _id ? "rotate-180" : ""}`}
@@ -674,7 +784,7 @@ const RelationshipButton: React.FC<RelationshipButtonProps> = ({
                                     className="mr-2 transition-colors duration-200 group-hover:text-red-600!"
                                     style={{ color: "#fff" }}
                                 />
-                                {friendLoading[_id] ? "Đang xử lý..." : "Hủy kết bạn"}
+                                <span className="whitespace-nowrap">{friendLoading[_id] ? "Đang xử lý..." : "Hủy kết bạn"}</span>
                             </button>
                         </div>
                     </div>
@@ -738,18 +848,59 @@ const RelationshipButton: React.FC<RelationshipButtonProps> = ({
                         <ErrorMessageAboveButtons>{simpleMessage}</ErrorMessageAboveButtons>
                     )}
                     <div className="flex gap-2 items-center">
-                        <button
-                            type="button"
-                            className="flex items-center gap-2 text-white px-4 py-2 rounded-lg font-semibold transition disabled:opacity-60"
-                            style={friendButtonBaseStyle}
-                            disabled={!!friendLoading[userId]}
-                            onClick={() => setShowRequestFriendModal(true)}
-                            onMouseOver={friendButtonHoverHandler}
-                            onMouseOut={friendButtonOutHandler}
+                        <div className="relative inline-block"
+                            onMouseEnter={() => setAddFriendDropdownOpen(true)}
+                            onMouseLeave={() => setAddFriendDropdownOpen(false)}
+                            tabIndex={-1}
                         >
-                            <FontAwesomeIcon icon={faUserPlus} />
-                            Kết bạn
-                        </button>
+                            <button
+                                type="button"
+                                className="flex items-center gap-2 text-white px-4 py-2 rounded-lg font-semibold transition disabled:opacity-60 whitespace-nowrap"
+                                style={friendButtonBaseStyle}
+                                disabled={!!friendLoading[userId]}
+                                onClick={() => setShowRequestFriendModal(true)}
+                                onMouseOver={friendButtonHoverHandler}
+                                onMouseOut={friendButtonOutHandler}
+                            >
+                                <FontAwesomeIcon icon={faUserPlus} />
+                                <span className="whitespace-nowrap">Kết bạn</span>
+                                {/* No faAngleDown icon here */}
+                            </button>
+                            {/* Block option dropdown, chỉ hiện khi hover */}
+                            <div
+                                className={`absolute left-1/2 -translate-x-1/2 mt-1 min-w-[110px] border rounded-lg shadow-md z-10 transition-all duration-200 ${addFriendDropdownOpen ? "opacity-100 visible translate-y-0" : "opacity-0 invisible -translate-y-2"
+                                    }`}
+                                style={{
+                                    top: "100%",
+                                    background: "#252728",
+                                    border: "1px solid #393b3b",
+                                    color: "#fff"
+                                }}
+                            >
+                                <button
+                                    type="button"
+                                    className="relationship-block-btn w-full px-4 py-2 text-left whitespace-nowrap transition duration-200 rounded-lg group"
+                                    onClick={() => {
+                                        setAddFriendDropdownOpen(false);
+                                        handleBlock(userId);
+                                    }}
+                                    style={{
+                                        whiteSpace: "nowrap",
+                                        cursor: "pointer",
+                                        color: "#fff",
+                                        border: "1.5px solid #ba3f54",
+                                        background: "transparent"
+                                    }}
+                                >
+                                    <FontAwesomeIcon
+                                        icon={faBan}
+                                        className="mr-2"
+                                        style={{ color: "#e63a44" }}
+                                    />
+                                    <span className="whitespace-nowrap">Chặn</span>
+                                </button>
+                            </div>
+                        </div>
                         {MessageButton}
                     </div>
                     <RequestFriendModal
@@ -761,6 +912,21 @@ const RelationshipButton: React.FC<RelationshipButtonProps> = ({
                         avatar={avatar}
                         username={username}
                     />
+                    {/* CSS cho hiệu ứng hover của nút chặn */}
+                    <style jsx global>{`
+                      .relationship-block-btn:hover,
+                      .relationship-block-btn:focus {
+                        background: #fff !important;
+                        color: #e63a44 !important;
+                      }
+                      .relationship-block-btn:hover .fa-ban,
+                      .relationship-block-btn:focus .fa-ban {
+                        color: #e63a44 !important;
+                      }
+                      .relationship-block-btn:active {
+                        background: #fee3e6 !important;
+                      }
+                    `}</style>
                 </div>
             );
         }
@@ -774,25 +940,71 @@ const RelationshipButton: React.FC<RelationshipButtonProps> = ({
         );
     }
 
+    // BLOCKED: XỬ LÝ HAI TRẠNG THÁI -- requester là mình (self-block) hay không
     if (status === "blocked") {
-        return (
-            <div className="flex flex-col">
-                {simpleMessage && (
-                    <ErrorMessageAboveButtons>{simpleMessage}</ErrorMessageAboveButtons>
-                )}
-                <div className="flex gap-2 items-center">
-                    <button
-                        type="button"
-                        className="bg-red-600 text-white font-semibold py-2 px-4 rounded-lg cursor-not-allowed"
-                        style={{ minWidth: 112 }}
-                        disabled
-                    >
-                        Đã chặn
-                    </button>
-                    {MessageButton}
+        // Nếu requester là myId => mình đã chặn người khác, có thể hủy chặn.
+        if (requester === myId) {
+            return (
+                <div className="flex flex-col">
+                    {simpleMessage && (
+                        <ErrorMessageAboveButtons>{simpleMessage}</ErrorMessageAboveButtons>
+                    )}
+                    <div className="flex gap-2 items-center">
+                        <button
+                            type="button"
+                            className="bg-[#ff3b53] text-white font-semibold py-2 px-4 rounded-lg whitespace-nowrap transition"
+                            style={{ minWidth: 112, cursor: friendLoading.unblock ? "not-allowed" : "pointer" }}
+                            onClick={() => handleUnblock(userId)}
+                            disabled={!!friendLoading.unblock}
+                        >
+                            <FontAwesomeIcon icon={faUnlockAlt} className="mr-2" />
+                            {friendLoading.unblock ? "Đang mở chặn..." : "Hủy chặn"}
+                        </button>
+                        {MessageButton}
+                    </div>
                 </div>
-            </div>
-        );
+            );
+        } else if (recipient === myId) {
+            // Nếu recipient là mình => mình bị người khác chặn (không cần dùng blockedBy)
+            return (
+                <div className="flex flex-col">
+                    {simpleMessage && (
+                        <ErrorMessageAboveButtons>{simpleMessage}</ErrorMessageAboveButtons>
+                    )}
+                    <div className="flex gap-2 items-center">
+                        <button
+                            type="button"
+                            className="bg-red-600 text-white font-semibold py-2 px-4 rounded-lg cursor-not-allowed whitespace-nowrap"
+                            style={{ minWidth: 112 }}
+                            disabled
+                        >
+                            Đã bị chặn
+                        </button>
+                        {MessageButton}
+                    </div>
+                </div>
+            );
+        } else {
+            // Fallback nếu neither => old rendering
+            return (
+                <div className="flex flex-col">
+                    {simpleMessage && (
+                        <ErrorMessageAboveButtons>{simpleMessage}</ErrorMessageAboveButtons>
+                    )}
+                    <div className="flex gap-2 items-center">
+                        <button
+                            type="button"
+                            className="bg-red-600 text-white font-semibold py-2 px-4 rounded-lg cursor-not-allowed whitespace-nowrap"
+                            style={{ minWidth: 112 }}
+                            disabled
+                        >
+                            Đã chặn
+                        </button>
+                        {MessageButton}
+                    </div>
+                </div>
+            );
+        }
     }
 
     return (

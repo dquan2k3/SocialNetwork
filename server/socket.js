@@ -1,27 +1,21 @@
 const { Server } = require("socket.io");
+const redis = require("./src/config/redis");
 import jwt from "jsonwebtoken";
-import { sendMessageHandler } from "./src/controller/conversation";
+import { getGroupConversation, sendMessageHandler, sendGroupMessageHandler } from "./src/controller/conversation";
+import { updateLastSeen, updateLastSeen2126 } from "./src/controller/auth";
 
 let io = null;
 
-// Hàm truyền vào cookie string và trả về decoded user nếu có
+// Giải mã token từ cookie
 function decodeUserFromCookie(cookieString) {
     if (!cookieString) return null;
     try {
-        // cookieString: 'token=xxxx; abc=1'
         const cookiesArr = cookieString.split(';').map(c => c.trim());
-        let token = null;
-        for (let item of cookiesArr) {
-            if (item.startsWith('token=')) {
-                token = item.replace('token=', '');
-                break;
-            }
-        }
-        if (!token) return null;
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        return decoded;
-    } catch (err) {
-        // Nếu verify không thành công
+        const tokenCookie = cookiesArr.find(item => item.startsWith('token='));
+        if (!tokenCookie) return null;
+        const token = tokenCookie.replace('token=', '');
+        return jwt.verify(token, process.env.JWT_SECRET);
+    } catch {
         return null;
     }
 }
@@ -41,146 +35,225 @@ function registerSocket(server) {
         console.error("[socket.io] Lỗi khi khởi tạo socket server!");
     }
 
-    // Lưu mapping userId -> socketId để gửi tin nhắn riêng tư
-    const userSockets = new Map();
-
     io.on("connection", (socket) => {
         console.log("A user connected:", socket.id);
 
-        // Khi client thực hiện userConnect, back-end sẽ lấy userId từ token (cookie)
-        socket.on("userConnect", (name) => {
+        // ------- userConnect -------
+        socket.on("userConnect", async (name) => {
             socket.data.name = name;
-
-            console.log("Registered:", socket.data);
 
             const cookies = socket.handshake.headers.cookie;
             const decoded = decodeUserFromCookie(cookies);
             const userId = decoded?.id;
-            if (userId) {
-                userSockets.set(userId, socket.id);
-                // lưu userId vào socket để hỗ trợ disconnect và làm senderId sau này
-                socket.userId = userId;
-                console.log(`mapped [BY TOKEN]: userId=${userId}, socketId=${socket.id}`);
-            } else {
-                console.warn("[userConnect] Không tìm thấy userId từ token trong cookie!");
-            }
-        });
+            const avatar = decoded?.avatar;
 
-        socket.on("disconnect", () => {
-            console.log("User disconnected:", socket.id);
-            if (socket.userId) {
-                userSockets.delete(socket.userId);
-            } else {
-                // Fallback: tìm theo socket id nếu chưa map userId trên socket
-                for (let [userId, socketId] of userSockets.entries()) {
-                    if (socketId === socket.id) {
-                        userSockets.delete(userId);
-                        break;
-                    }
+            if (!userId) {
+                console.warn("[userConnect] Không tìm thấy userId từ cookie");
+                return;
+            }
+
+            socket.userId = userId;
+            socket.avatar = avatar;
+
+            // Lưu socketId đa tab
+            await redis.sAdd(`user:${userId}:sockets`, socket.id);
+            // Đánh dấu user online
+            await redis.sAdd("online_users", userId);
+            // Join phòng riêng user
+            socket.join(userId);
+
+            // Join group conversations
+            try {
+                const groupIdList = await getGroupConversation(userId);
+                if (Array.isArray(groupIdList)) {
+                    groupIdList.forEach(group => {
+                        if (group.conversationId) {
+                            socket.join(group.conversationId);
+                        }
+                    });
                 }
+            } catch (err) {
+                console.error("Lỗi join group conversations:", err);
+            }
+
+            const socketCount = await redis.sCard(`user:${userId}:sockets`);
+            console.log("socketCount : ", socketCount)
+            if (socketCount === 1) {
+                console.log(`[ONLINE] User online: ${userId}`);
+                // Gửi sự kiện ONLINE_USER với data về user vừa online, truyền thêm avatar
+                updateLastSeen2126(userId)
+                io.emit("onlineUser", {
+                    userId,
+                    name: socket.data.name,
+                    type: "online",
+                    avatar: avatar
+                });
             }
         });
 
-        // Xử lý gửi tin nhắn (PRIVATE)
+        // ------- disconnect -------
+        socket.on("disconnect", async () => {
+            const userId = socket.userId;
+            const avatar = socket.avatar;
+            if (!userId) return;
+
+            // Xóa socketId này khỏi user
+            await redis.sRem(`user:${userId}:sockets`, socket.id);
+            // Kiểm tra còn socket nào không
+            const remain = await redis.sCard(`user:${userId}:sockets`);
+            if (remain === 0) {
+                await redis.sRem("online_users", userId);
+                console.log(`[OFFLINE] User offline: ${userId}`);
+
+                updateLastSeen(userId)
+
+                // Gửi sự kiện ONLINE_USER với data về user vừa offline, truyền thêm avatar
+                io.emit("onlineUser", {
+                    userId,
+                    name: socket.data.name,
+                    type: "offline",
+                    avatar: avatar
+                });
+            }
+        });
+
         socket.on("sendMessage", async (data) => {
             try {
-                // Dùng userId đã map trên socket làm senderId luôn, không nhận senderId từ client nữa
                 const senderId = socket.userId;
-                const { receiverId, message, conversationId } = data;
+                const { receiverId, message } = data;
+                let { conversationId } = data;
+                console.log("[sendMessage] received:", { senderId, receiverId, message, conversationId });
 
-                // Bắt buộc phải có senderId, receiverId, message
                 if (!senderId || !receiverId || !message) {
-                    socket.emit("messageError", { error: "Missing senderId (mapped by backend), receiverId hoặc message" });
+                    socket.emit("messageError", { error: "Thiếu senderId, receiverId hoặc message" });
                     return;
                 }
 
-                // Gọi async sendMessageHandler để xử lý và lưu vào database
                 let result;
                 try {
                     result = await sendMessageHandler({ senderId, receiverId, message, conversationId });
                 } catch (err) {
-                    console.error("sendMessageHandler error:", err);
                     socket.emit("messageError", {
-                        error: err && err.message ? err.message : "Failed to save message"
+                        error: err?.message || "Failed to save message"
                     });
                     return;
                 }
 
-                // Chuẩn bị dữ liệu trả về
+                // Nếu client không kèm conversationId, lấy từ sendMessageHandler
+                if (!conversationId && result.conversationId) {
+                    conversationId = result.conversationId;
+                }
+
                 let sendData = {
                     senderId: result.senderId,
                     message: result.message,
                     createdAt: result.createdAt,
-                    ...(result.conversationId && { conversationId: result.conversationId })
+                    ...(conversationId && { conversationId })
                 };
 
+                // Lấy tất cả socketId của receiver (đa tab)
+                let receiverSocketIds = [];
+                try {
+                    receiverSocketIds = await redis.sMembers(`user:${receiverId}:sockets`);
+                } catch { receiverSocketIds = []; }
 
-                console.log("MESSAGE DATA :", sendData);
-
-                // Nếu có receiverId, gửi riêng tư
-                const receiverSocketId = userSockets.get(receiverId);
-
-                if (receiverSocketId) {
-                    socket.to(receiverSocketId).emit("receiveMessage", sendData);
-                    console.log(`Message sent privately to user ${receiverSocketId}`, { withCredentials: true });
-
-                    if (result.conversationId) {
-                        sendData = {
+                // Gửi messageNotification cho cả sender và receiver với dữ liệu tin nhắn (private)
+                if (receiverSocketIds && receiverSocketIds.length > 0) {
+                    receiverSocketIds.forEach(sid => {
+                        // Gửi cho từng socket của receiver
+                        socket.to(sid).emit("receiveMessage", sendData);
+                        socket.to(sid).emit("messageNotification", {
+                            type: "private",
                             ...sendData,
-                            receiverId: receiverId,
-                        };
-                        console.log(`Message sent privately to user sender`);
-                        socket.emit("receiveMessage", sendData);
+                            peerUserId: senderId,
+                            conversationId,
+                        });
+                    });
+                    // Gửi lại cho sender nếu có conversationId (giúp đồng bộ giao diện)
+                    if (conversationId) {
+                        socket.emit("receiveMessage", { ...sendData, receiverId });
                     }
+                    // Thông báo notification cho sender
+                    socket.emit("messageNotification", {
+                        type: "private",
+                        ...sendData,
+                        peerUserId: receiverId,
+                        conversationId,
+                    });
                 } else {
-                    console.log(`User ${receiverId} is not online`);
+                    // Nếu receiver offline vẫn gửi notification cho sender
                     socket.emit("messageError", {
                         error: "User not online",
-                        receiverId: receiverId
+                        receiverId
+                    });
+                    socket.emit("messageNotification", {
+                        type: "private",
+                        ...sendData,
+                        peerUserId: receiverId,
+                        conversationId,
                     });
                 }
 
-                // Confirm tin nhắn đã gửi thành công, gửi lại cho sender
-                socket.emit("messageSent", { success: true, data: sendData, withCredentials: true });
+                socket.emit("messageSent", { success: true, data: sendData });
 
             } catch (error) {
-                console.error("Error handling sendMessage:", error);
                 socket.emit("messageError", { error: "Failed to send message" });
             }
         });
 
-        // Xử lý join room (để chat nhóm)
         socket.on("joinRoom", (roomId) => {
             socket.join(roomId);
-            console.log(`Socket ${socket.id} joined room ${roomId}`);
             socket.emit("roomJoined", { roomId, success: true });
         });
 
         socket.on("leaveRoom", (roomId) => {
             socket.leave(roomId);
-            console.log(`Socket ${socket.id} left room ${roomId}`);
             socket.emit("roomLeft", { roomId, success: true });
         });
 
-        // Gửi tin nhắn trong room
-        socket.on("sendRoomMessage", (data) => {
+        socket.on("sendRoomMessage", async (data) => {
             try {
-                const { roomId, ...messageData } = data;
-                socket.to(roomId).emit("receiveRoomMessage", messageData);
-                socket.emit("messageSent", { success: true, data: messageData });
+                // Gửi tin nhắn cho tất cả thành viên group ngoại trừ sender
+                socket.to(data.roomId).emit("receiveRoomMessage", data);
 
-                // Log ra message gửi lên từ client giống @page.tsx (52-65)
-                console.log(
-                    "[sendRoomMessage] Data nhận được từ client:",
-                    JSON.stringify(data, null, 2)
-                );
-                console.log(data)
+                // Lưu ý: hàm sendGroupMessageHandler trả về gì thì tuỳ bạn (có thể bổ sung gắn id hoặc dữ liệu bổ sung)
+                // Thực hiện lưu message group (thường là không cần await nếu không trả về dữ liệu, nhưng để chắc chắn cập nhật nội dung gửi đi)
+                let savedMessage;
+                try {
+                    savedMessage = await sendGroupMessageHandler({
+                        roomId: data.roomId,
+                        senderId: socket.userId,
+                        message: data.message
+                    });
+                } catch (err) {
+                    socket.emit("messageError", { error: "Failed to save group message" });
+                    return;
+                }
+
+                // Thông báo messageNotification cho tất cả thành viên (bao gồm cả người gửi):
+                // Lấy tất cả socket trong room (bao gồm cả sender)
+                const room = io.sockets.adapter.rooms.get(data.roomId) || new Set();
+                const notificationData = {
+                    type: "group",
+                    senderId: socket.userId,
+                    message: data.message,
+                    createdAt: savedMessage?.createdAt || new Date(),
+                    conversationId: data.roomId // luôn trả conversationId
+                };
+
+                // Gửi event đến từng socketId trong room
+                for (const socketId of room) {
+                    const targetSocket = io.sockets.sockets.get(socketId);
+                    if (targetSocket) {
+                        targetSocket.emit("messageNotification", notificationData);
+                    }
+                }
+
+                socket.emit("messageSent", { success: true, data: notificationData });
             } catch (error) {
-                console.error("Error handling sendRoomMessage:", error);
                 socket.emit("messageError", { error: "Failed to send room message" });
             }
         });
-
     });
 }
 
@@ -191,5 +264,5 @@ function getIO() {
 module.exports = {
     registerSocket,
     getIO,
-    decodeUserFromCookie,
+    decodeUserFromCookie
 };

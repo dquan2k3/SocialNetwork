@@ -8,6 +8,11 @@ const postSchema = new mongoose.Schema({
   },
   text: String,
   privacy: String,
+  groupId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'groups',
+    default: null // Nếu null thì là bài viết cá nhân/chung
+  }
 }, { timestamps: true });
 
 export const postModel = mongoose.model('posts', postSchema);
@@ -88,7 +93,33 @@ const postReportedSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'posts',
     required: true
+  },
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'accounts',
+    required: true
   }
 }, { timestamps: true });
 
 export const postReportedModel = mongoose.model('post_reporteds', postReportedSchema);
+
+// Bảng reported cho các comment bị báo cáo
+const commentReportedSchema = new mongoose.Schema({
+  commentId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'post_comments',
+    required: true
+  },
+  postId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'posts',
+    required: true
+  },
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'accounts',
+    required: true
+  }
+}, { timestamps: true });
+
+export const commentReportedModel = mongoose.model('comment_reporteds', commentReportedSchema);

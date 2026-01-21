@@ -1,9 +1,31 @@
 // middleware.ts
 import { NextRequest, NextResponse } from "next/server";
 
+// Decode JWT utility (without verifying signature)
+function decodeJwt(token: string) {
+    try {
+        const parts = token.split(".");
+        if (parts.length !== 3) return null;
+        const payload = parts[1];
+        // JWT uses base64url encoding
+        const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+        const decodedPayload = Buffer.from(base64, "base64").toString("utf-8");
+        return JSON.parse(decodedPayload);
+    } catch (e) {
+        return null;
+    }
+}
+
 export function middleware(req: NextRequest) {
     const token = req.cookies.get("token")?.value;
     const pathname = req.nextUrl.pathname;
+
+    let decoded: any = null;
+
+    // Nếu có token, decode và log thông tin
+    if (token) {
+        decoded = decodeJwt(token);
+    }
 
     // ❗ BỎ QUA static files & next internals
     if (
@@ -15,14 +37,25 @@ export function middleware(req: NextRequest) {
         return NextResponse.next();
     }
 
-    // Cho phép auth
+    // Nếu có token và vào /auth thì redirect về /home
     if (pathname.startsWith("/auth")) {
-        return NextResponse.next();
+        if (token) {
+            return NextResponse.redirect(new URL("/home", req.url));
+        } else {
+            return NextResponse.next();
+        }
     }
 
     // Chưa login → redirect
     if (!token) {
         return NextResponse.redirect(new URL("/auth", req.url));
+    }
+
+    // Nếu vào /management mà không có quyền Admin thì redirect về /home
+    if (pathname.startsWith("/management")) {
+        if (!decoded || decoded.role !== "Admin") {
+            return NextResponse.redirect(new URL("/home", req.url));
+        }
     }
 
     return NextResponse.next();

@@ -15,6 +15,7 @@ import {
   RegisterPayload,
 } from "@/api/auth.api";
 import { toast } from "react-toastify";
+import { getErrorMessage } from "@/helper/getErrorMessage";
 
 // Đăng xuất xong chuyển hướng đến trang auth
 
@@ -33,7 +34,7 @@ export const authLogin = async (dispatch: AppDispatch, payload: LoginPayload) =>
     return data;
   } catch (error: any) {
     const msg = error.response?.data?.message || "Đăng nhập thất bại!";
-    toast.error(msg);
+    toast.error(getErrorMessage(error));
     throw error;
   }
 };

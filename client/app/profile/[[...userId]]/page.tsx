@@ -4,11 +4,34 @@ import Post from "@/components/ui/Post";
 import AlterProfilePopup from "../menu/alterProfilePopup";
 import { useSelector, useDispatch } from "react-redux";
 import { getCloudinaryImageLink, getCloudinaryCoverLink } from "@/helper/croppedImageHelper";
+import { apiBanUserDueToProfile } from "@/api/management.api";
 import ShowImage from "@/components/ui/ShowImage";
 import { apiChangeUsername, apiGetUserProfile } from "@/api/profile.api";
 import Information from "../menu/Information";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import RelationshipButton from "@/components/ui/RelationshipButton";
+import ImageProfileTab from "../menu/Images";
+import FriendsProfilePage from "../menu/FriendsProfilePage";
+import FriendsPage from "@/app/friends/page";
+import { toast } from "react-toastify";
+import { getErrorMessage } from "@/helper/getErrorMessage";
+
+// For report popup: FontAwesome (just for example icon, remove if not needed)
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faFlag } from "@fortawesome/free-solid-svg-icons";
+import { apiReportUser } from "@/api/report.api";
+
+// Popup close button for ban popup
+function PopupCloseButton({ onClick, ariaLabel }: { onClick: () => void, ariaLabel?: string }) {
+  return (
+    <button
+      className="absolute top-2 right-2 text-gray-400 hover:bg-gray-700 text-2xl cursor-pointer rounded-full w-10 h-10 flex items-center justify-center transition"
+      onClick={onClick}
+      aria-label={ariaLabel || "Đóng"}
+      type="button"
+    >&times;</button>
+  );
+}
 
 type ImageObj = {
   file_type?: string;
@@ -32,6 +55,7 @@ function getRemainingDays(usernameChangedDateRaw?: string | number | Date): numb
 export default function ProfilePage() {
   // Lấy userId từ param
   const params = useParams();
+  const router = useRouter();
   let userId: string | undefined = undefined;
   if (params && (params as any).userId) {
     if (Array.isArray((params as any).userId) && (params as any).userId.length > 0) {
@@ -47,6 +71,25 @@ export default function ProfilePage() {
   const [showStickyProfile, setShowStickyProfile] = useState(false);
   const [activeTab, setActiveTab] = useState("posts");
   const [isFlashing, setIsFlashing] = useState("");
+
+  // Báo cáo popup
+  const [showReportPopup, setShowReportPopup] = useState(false);
+  const [reportReason, setReportReason] = useState("");
+  const [pendingReport, setPendingReport] = useState(false);
+  const [reportSuccess, setReportSuccess] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  // Ban popup
+  const [showBanPopup, setShowBanPopup] = useState(false);
+  const [banDays, setBanDays] = useState("0");
+  const [banError, setBanError] = useState("");
+  const [loadingBan, setLoadingBan] = useState(false);
+  const [banCheck, setBanCheck] = useState({
+    avatar: false,
+    cover: false,
+    name: false,
+    username: false,
+  });
 
   // Modal for ShowImage
   const [modalData, setModalData] = useState<{
@@ -66,8 +109,21 @@ export default function ProfilePage() {
 
   // Nếu userId: dùng apiGetUserProfile. Ngược lại: dùng redux.
   const reduxUser = useSelector((state: any) => state.user);
+  const auth = useSelector((state: any) => state.auth); // <-- for admin role
+  const role = auth?.user?.role;
   const myId = reduxUser.userId;
+  const user = useSelector((state: any) => state.user);
+  const myName = user.profile?.name;
+  const myUsername = user.profile?.username;
+  const myAvatar = getCloudinaryImageLink(user.bio?.avatar, user.bio?.avatarCroppedArea, 56);
   const [userProfile, setUserProfile] = useState<any>(userId ? null : reduxUser);
+
+  // Nếu myId === userId param thì chuyển về trang /profile
+  useEffect(() => {
+    if (userId && myId && userId === myId) {
+      router.replace("/profile");
+    }
+  }, [userId, myId, router]);
 
   // Loading + error cho mode khac user (userId)
   const [loadingProfile, setLoadingProfile] = useState(!!userId);
@@ -95,7 +151,6 @@ export default function ProfilePage() {
     }
   }, [userId, reduxUser]);
 
- 
 
   // Xử lý sync/logic cho chỉnh sửa username. Chỉ dùng khi không có userId.
   // Khi đang xem profile của chính mình, cho phép sửa username.
@@ -148,6 +203,37 @@ export default function ProfilePage() {
   const handleClick = (id: string) => {
     setIsFlashing(id);
     setTimeout(() => setIsFlashing(""), 100);
+  };
+
+  // Report popup handlers
+  const handleReport = async () => {
+    setReportError(null);
+    if (!reportReason.trim()) {
+      setReportError("Vui lòng nhập lý do.");
+      return;
+    }
+    try {
+      const res = await apiReportUser({
+        userId: userId || "",
+        reason: reportReason,
+        type: "user"
+      });
+      // Similar to Showpost.tsx, use toast.success on success
+      toast.success(res.message || "Đã gửi báo cáo thành công");
+      setReportSuccess(true);
+    } catch (err: any) {
+      // Similar to Showpost.tsx, use toast.warn with error message
+      toast.warn(getErrorMessage(err));
+      setReportError(
+        err?.response?.data?.message ||
+        err?.message ||
+        "Gửi báo cáo thất bại, vui lòng thử lại."
+      );
+    }
+    setShowReportPopup(false);
+    setReportReason("");
+    setReportSuccess(false);
+    setReportError(null);
   };
 
   // ===================
@@ -253,6 +339,9 @@ export default function ProfilePage() {
     };
   }, []);
 
+  // Helper: Ban popup images
+  const coverImg = getCloudinaryCoverLink(displayCover, displayCoverCroppedArea, 448, 168);
+
   // ===================
   // RENDER LOGIC
   // ===================
@@ -272,10 +361,235 @@ export default function ProfilePage() {
     );
   }
 
+  // Các props lấy từ dòng 71-73:
+  // const myId = reduxUser.userId;
+  // const myName = user.profile?.name;
+  // const myUsername = user.profile?.username;
+
+  // ------------ BAN USER POPUP JSX -----------
+  const BanUserPopup = ({
+    open,
+    userData,
+    onClose
+  }: {
+    open: boolean;
+    userData: {
+      userId: string;
+      avatar?: string;
+      avatarCroppedArea?: any;
+      name?: string;
+      username?: string;
+      cover?: string;
+      coverCroppedArea?: any;
+    };
+    onClose: () => void;
+  }) => {
+    if (!open) return null;
+
+    return (
+      <div
+        className="fixed inset-0 flex items-center justify-center z-500"
+        style={{
+          background: "rgba(40,40,40,0.82)",
+          backdropFilter: "blur(1.5px)"
+        }}
+        onClick={onClose}
+      >
+        <div
+          className="bg-[#232325] rounded-2xl p-6 shadow-xl border border-[#444] flex flex-col items-center max-w-[90vw] w-96 relative"
+          onClick={e => e.stopPropagation()}
+        >
+          <PopupCloseButton onClick={onClose} ariaLabel="Đóng popup người dùng bị báo cáo" />
+          <div className="mb-6 w-full flex flex-col gap-4">
+
+            {/* Cover */}
+            <div className="flex flex-col gap-2 w-full">
+              <label htmlFor="cover-checkbox" className="flex flex-row items-center cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  id="cover-checkbox"
+                  checked={banCheck.cover}
+                  onChange={e => setBanCheck((c) => ({ ...c, cover: e.target.checked }))}
+                  className="form-checkbox h-5 w-5 text-blue-600 focus:ring-blue-500 border-gray-300 mr-2"
+                />
+                <span className="font-semibold text-white text-base">Ảnh bìa:</span>
+              </label>
+              <div className="relative w-full flex items-center justify-center">
+                <img
+                  src={coverImg}
+                  alt="Ảnh bìa"
+                  style={{
+                    width: "448px",
+                    height: "168px",
+                    objectFit: "cover",
+                    borderRadius: "0.5rem",
+                    filter: "brightness(0.9)"
+                  }}
+                  className="border border-gray-700"
+                />
+              </div>
+            </div>
+
+            {/* Avatar */}
+            <div className="flex flex-col gap-2 items-start w-full">
+              <label htmlFor="avatar-checkbox" className="flex flex-row items-center cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  id="avatar-checkbox"
+                  checked={banCheck.avatar}
+                  onChange={e => setBanCheck((c) => ({ ...c, avatar: e.target.checked }))}
+                  className="form-checkbox h-5 w-5 text-blue-600 focus:ring-blue-500 border-gray-300 mr-2"
+                />
+                <span className="font-semibold text-white text-base">Avatar:</span>
+              </label>
+              <div className="flex items-center gap-2">
+                <img
+                  src={
+                    userData.avatar
+                      ? getCloudinaryImageLink(userData.avatar, userData.avatarCroppedArea, 80)
+                      : "/user_default.png"
+                  }
+                  alt={userData.name}
+                  className="rounded-full w-20 h-20 object-cover border border-gray-700"
+                />
+              </div>
+            </div>
+
+            {/* Name */}
+            <div className="flex flex-col gap-2 items-start w-full">
+              <label htmlFor="name-checkbox" className="flex flex-row items-center cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  id="name-checkbox"
+                  checked={banCheck.name}
+                  onChange={e => setBanCheck((c) => ({ ...c, name: e.target.checked }))}
+                  className="form-checkbox h-5 w-5 text-blue-600 focus:ring-blue-500 border-gray-300 mr-2"
+                />
+                <span className="font-semibold text-white text-base">
+                  Tên người dùng: {userData.name}
+                </span>
+              </label>
+              {/* Username with checkbox, white text */}
+              <label htmlFor="username-checkbox" className="flex items-center gap-2 mt-1 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  id="username-checkbox"
+                  checked={!!banCheck.username}
+                  onChange={e => setBanCheck((c) => ({ ...c, username: e.target.checked }))}
+                  className="form-checkbox h-5 w-5 text-blue-600 focus:ring-blue-500 border-gray-300"
+                  style={{ marginRight: "0.5rem" }}
+                />
+                <span className="text-white text-base font-semibold">
+                  Username: {userData.username}
+                </span>
+              </label>
+            </div>
+
+            {/* Ban days input */}
+            <div className="flex flex-col gap-2 w-full mt-2">
+              <label htmlFor="ban-days-userpopup" className="text-sm text-white font-semibold">
+                Nhập số ngày cấm (0 là không đổi):
+              </label>
+              <input
+                id="ban-days-userpopup"
+                type="number"
+                value={banDays}
+                min={0}
+                step={1}
+                onChange={e => {
+                  let v = e.target.value.replace(/[^0-9]/g, "");
+                  if (v === "") v = "0";
+                  setBanDays(v);
+                  setBanError("");
+                }}
+                className="px-3 py-2 rounded border border-gray-600 bg-[#212124] text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="0 (không đổi)"
+              />
+              {banError && (
+                <div className="text-red-400 text-xs mt-1">{banError}</div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex justify-end items-center w-full gap-3 mt-4">
+            <button
+              className="px-4 py-2 rounded-lg bg-gray-600 text-white font-semibold hover:bg-gray-500 transition cursor-pointer"
+              style={{ minWidth: 80 }}
+              onClick={onClose}
+              type="button"
+            >Đóng</button>
+            <button
+              className={`px-6 py-2 rounded-lg bg-red-700 text-white font-semibold hover:bg-red-800 transition flex items-center justify-center cursor-pointer ${loadingBan ? "opacity-60 pointer-events-none" : ""}`}
+              onClick={async () => {
+                if (!/^\d+$/.test(banDays)) {
+                  setBanError("Vui lòng nhập số ngày hợp lệ");
+                  return;
+                }
+                setBanError("");
+                setLoadingBan(true);
+                try {
+                  const res = await apiBanUserDueToProfile(
+                    userData.userId,
+                    parseInt(banDays, 10),
+                    !!banCheck.avatar,
+                    !!banCheck.cover,
+                    !!banCheck.name,
+                    !!banCheck.username
+                  );
+                  if (res && res.success) {
+                    // Gọi lại API lấy profile user mới nhất (name, username, cover, avatar, ...)
+                    if (userData.userId) {
+                      try {
+                        const refreshed = await apiGetUserProfile(userData.userId);
+                        setUserProfile(refreshed); // cập nhật state
+                      } catch (e) {
+                        // ignore, chỉ báo lỗi toast nếu cần
+                        toast.warn("Làm mới hồ sơ thất bại.");
+                      }
+                    }
+                    toast.success("Đã cấm/xóa thành công.");
+                  } else {
+                    // res không có success là true
+                    toast.warn(res && res.message ? res.message : "Cấm/xóa thất bại!");
+                  }
+                  onClose();
+                } catch (err) {
+                  setBanError(getErrorMessage(err));
+                } finally {
+                  setLoadingBan(false);
+                }
+              }}
+              type="button"
+              disabled={loadingBan}
+            >
+              {loadingBan ? "Đang xử lý..." : "Xóa và cấm"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ---------- END BAN USER POPUP ----------
+
+  // Data for ban popup
+  const banUserData = {
+    userId: userId || "",
+    avatar: bio.avatar,
+    avatarCroppedArea: bio.avatarCroppedArea,
+    name: profile.name,
+    username: profile.username,
+    cover: bio.cover,
+    coverCroppedArea: bio.coverCroppedArea,
+  };
+
+  // Determine admin is viewing others' profile (not self)
+  const isViewingOther = !!userId && (!!role && role === "Admin");
+
   return (
     <div className="flex flex-col min-h-screen bg-[#252728]">
-      {/* Popup chỉnh sửa hồ sơ - Ẩn khi có userId*/}
-      {!userId && (
+      {/* Popup chỉnh sửa hồ sơ - Ẩn khi có userId, chỉ render khi showPopup */}
+      {!userId && showPopup && (
         <AlterProfilePopup
           showPopup={showPopup}
           setShowPopup={setShowPopup}
@@ -304,6 +618,88 @@ export default function ProfilePage() {
           username={modalData.username}
           createdAt={modalData.createdAt}
         />
+      )}
+
+      {/* Ban User Popup (admin - chỉ khi xem người khác) */}
+      {showBanPopup && (
+        <BanUserPopup
+          open={showBanPopup}
+          userData={banUserData}
+          onClose={() => setShowBanPopup(false)}
+        />
+      )}
+
+      {/* Report User Popup (ẩn nếu là admin xem người khác) */}
+      {showReportPopup && !isViewingOther && (
+        <div
+          className="fixed inset-0 flex items-center justify-center z-[300]"
+          style={{
+            background: "rgba(0,0,0,0.65)"
+            // backdropFilter: "blur(2px)"
+          }}
+        >
+          <div className="bg-[#232325] rounded-2xl p-6 shadow-xl border border-[#444] flex flex-col items-center max-w-[90vw] w-96">
+            <div className="mb-4 w-full flex items-center justify-between">
+              <div className="font-semibold text-lg text-white">Báo cáo người dùng</div>
+              <button
+                className="text-gray-400 hover:bg-gray-700 text-2xl cursor-pointer rounded-full w-10 h-10 flex items-center justify-center transition"
+                onClick={() => {
+                  setShowReportPopup(false);
+                  setTimeout(() => {
+                    setReportReason("");
+                    setReportSuccess(false);
+                    setReportError(null);
+                  }, 300);
+                }}
+                aria-label="Đóng báo cáo"
+                type="button"
+              >&times;</button>
+            </div>
+            <div className="text-[#ddd] text-center mb-6">
+              Vui lòng nhập lý do bạn muốn báo cáo người dùng này.
+            </div>
+            <textarea
+              className="bg-[#232425] text-white border border-[#525356] px-3 py-2 rounded w-full min-h-[80px] mb-2 resize-none outline-none"
+              placeholder="Nhập lý do báo cáo..."
+              maxLength={300}
+              value={reportReason}
+              onChange={e => setReportReason(e.target.value)}
+              disabled={pendingReport || reportSuccess}
+            />
+            {reportError && (
+              <div className="text-red-400 mb-2 w-full text-sm">{reportError}</div>
+            )}
+            {reportSuccess && (
+              <div className="text-green-400 mb-2 w-full text-sm text-center">Báo cáo thành công. Cảm ơn bạn!</div>
+            )}
+            <div className="flex justify-end items-center w-full gap-3 mt-2">
+              <button
+                className="px-4 py-2 rounded-lg bg-gray-600 text-white font-semibold hover:bg-gray-500 transition cursor-pointer"
+                style={{ minWidth: 80 }}
+                disabled={pendingReport || reportSuccess}
+                onClick={() => {
+                  setShowReportPopup(false);
+                  setTimeout(() => {
+                    setReportReason("");
+                    setReportSuccess(false);
+                    setReportError(null);
+                  }, 300);
+                }}
+                type="button"
+              >Hủy</button>
+              <button
+                className="px-5 py-2 rounded-lg bg-red-600 text-white font-semibold hover:bg-red-700 transition flex items-center justify-center cursor-pointer"
+                style={{ minWidth: 110 }}
+                disabled={pendingReport || reportSuccess}
+                onClick={handleReport}
+                type="button"
+              >
+                <FontAwesomeIcon icon={faFlag} className="mr-2" />
+                Gửi báo cáo
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Sticky avatar + name */}
@@ -381,8 +777,8 @@ export default function ProfilePage() {
                 </div>
               </div>
               <div className="pt-12 flex flex-col gap-2">
-                <div className="text-4xl text-white font-semibold cursor-pointer">
-                  {displayName || displayUsername || "user"}
+                <div className="text-4xl text-white font-semibold cursor-pointer whitespace-nowrap pr-2">
+                  {displayName || "user"}
                 </div>
                 {/* Username row: Ẩn hết các nút chỉnh sửa nếu đang xem profile người khác */}
                 <div className="flex items-center text-xl text-white gap-2">
@@ -438,6 +834,28 @@ export default function ProfilePage() {
                   ) : (
                     // Hiển thị chỉ username, không nút chỉnh sửa
                     <span>@{displayUsername}</span>
+                  )}
+                  {/* Ban/Cấm or Báo cáo người dùng button */}
+                  {userId && (
+                    isViewingOther ? (
+                      <button
+                        className="ml-2 px-2 py-1 rounded bg-red-700/80 hover:bg-red-600 text-white text-base transition flex items-center cursor-pointer"
+                        title="Cấm người dùng này"
+                        onClick={() => setShowBanPopup(true)}
+                      >
+                        {/* Ban icon (fa-ban) could be added here */}
+                        Cấm
+                      </button>
+                    ) : (
+                      <button
+                        className="ml-2 px-2 py-1 rounded bg-red-700/80 hover:bg-red-600 text-white text-base transition flex items-center cursor-pointer"
+                        title="Báo cáo người dùng này"
+                        onClick={() => setShowReportPopup(true)}
+                      >
+                        <FontAwesomeIcon icon={faFlag} className="mr-1" />
+                        Báo cáo
+                      </button>
+                    )
                   )}
                 </div>
               </div>
@@ -517,16 +935,24 @@ export default function ProfilePage() {
                     avatarCroppedArea={displayAvatarCroppedArea}
                     userId={userId ? userId : undefined}
                     pageType="Profile"
+                    myId={myId}
+                    myName={myName}
+                    myUsername={myUsername}
+                    myAvatar={myAvatar}
                   />
                 )}
                 {activeTab === "about" && (
                   <Information userId={userId ? userId : undefined} />
                 )}
                 {activeTab === "friends" && (
-                  <div className="text-white text-center">Danh sách bạn bè</div>
+                  userId ? (
+                    <FriendsProfilePage userId={userId} />
+                  ) : (
+                    <FriendsPage />
+                  )
                 )}
                 {activeTab === "photos" && (
-                  <div className="text-white text-center">Thư viện ảnh</div>
+                  <ImageProfileTab userId={userId ? userId : ""} />
                 )}
                 {activeTab === "groups" && (
                   <div className="text-white">Nội dung Nhóm</div>
@@ -540,4 +966,3 @@ export default function ProfilePage() {
     </div>
   );
 }
-

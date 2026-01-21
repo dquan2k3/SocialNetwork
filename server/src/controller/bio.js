@@ -330,3 +330,24 @@ export const getBioFriendAvatar = async (req, res) => {
         res.status(500).json({ success: false, message: 'Lỗi server' });
     }
 }
+
+export const getCoverHome = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+
+        if (!userId) {
+            return res.status(401).json({ success: false, message: 'Không có userId, truy cập bị từ chối' });
+        }
+        // Lấy dữ liệu cover để trả về
+        const coverData = await bioModel.findOne(
+            { userid: userId },
+            'cover coverCroppedArea -_id'
+        );
+        if (!coverData) {
+            return res.status(404).json({ success: false, message: 'Không tìm thấy cover' });
+        }
+        res.json({ success: true, cover: coverData });
+    } catch (err) {
+        res.status(500).json({ success: false, message: 'Lỗi server' });
+    }
+};

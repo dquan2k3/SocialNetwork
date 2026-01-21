@@ -896,6 +896,15 @@ const AlterProfilePopup: React.FC<AlterProfilePopupProps> = ({
     }
   };
 
+  // Helper function to resolve which image src to use, with fallback and default image.
+  const getValidImgSrc = (mainSrc: string, fallbackSrc: string, defaultSrc?: string) => {
+    if (mainSrc && mainSrc.trim() !== "") return mainSrc;
+    if (fallbackSrc && fallbackSrc.trim() !== "") return fallbackSrc;
+    // Provide a default image or blank fallback, e.g. a data:image/svg+xml icon
+    if (defaultSrc !== undefined) return defaultSrc;
+    return "data:image/svg+xml;utf8,<svg width='100%' height='100%' xmlns='http://www.w3.org/2000/svg'><rect width='100%' height='100%' fill='%23222'/></svg>";
+  };
+
   return (
     <div
       className={`fixed ${showPopup ? "flex" : "!hidden"} w-full inset-0 z-[100] items-start justify-center overflow-auto`}
@@ -960,7 +969,7 @@ const AlterProfilePopup: React.FC<AlterProfilePopupProps> = ({
                     onClick={handleAvatarClick}
                   >
                     <img
-                      src={avatarPreviewUrl || avatarData.url}
+                      src={getValidImgSrc(avatarPreviewUrl, avatarData.url)}
                       alt="avatar"
                       className="w-full h-full object-cover"
                       style={{
@@ -1045,7 +1054,7 @@ const AlterProfilePopup: React.FC<AlterProfilePopupProps> = ({
                     onClick={handleCoverClick}
                   >
                     <img
-                      src={coverPreviewUrl || coverData.url}
+                      src={getValidImgSrc(coverPreviewUrl, coverData.url)}
                       alt="cover"
                       className="w-full h-full object-cover"
                       style={{

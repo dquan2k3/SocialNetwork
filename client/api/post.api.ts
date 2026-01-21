@@ -88,10 +88,10 @@ export const apiGetHomePost = async () => {
 export const apiReactPost = async ({ postId, react }: { postId: string, react: string }) => {
     try {
         const response = await instance.post('/post/reactPost', { postId, react });
-        console.log(response)
         return response.data;
     } catch (error: any) {
         if (error.response) {
+            console.log(error)
             console.error('Lỗi server:', error.response.data);
         } else {
             console.error('Lỗi khác:', error.message);
@@ -103,7 +103,6 @@ export const apiReactPost = async ({ postId, react }: { postId: string, react: s
 export const apiCommentPost = async ({ postId, comment }: { postId: string, comment: string }) => {
     try {
         const response = await instance.post('/post/commentPost', { postId, comment });
-        console.log(response)
         return response.data;
     } catch (error: any) {
         if (error.response) {
@@ -115,10 +114,41 @@ export const apiCommentPost = async ({ postId, comment }: { postId: string, comm
     }
 };
 
+export const apiLoadComment = async ({ postId, cursor }: { postId: string, cursor?: { time: string } }) => {
+    try {
+        const params: any = { postId, ...(cursor || {}) };
+        const response = await instance.get('/post/loadComment', { params });
+        return response.data;
+    } catch (error: any) {
+        if (error.response) {
+            console.error('Lỗi server:', error.response.data);
+        } else {
+            console.error('Lỗi khác:', error.message);
+        }
+        throw error;
+    }
+};
+
+export const apiDeleteComment = async ({ commentId }: { commentId: string }) => {
+    try {
+        const response = await instance.delete('/post/deleteComment', { data: { commentId } });
+        return response.data;
+    } catch (error: any) {
+        if (error.response) {
+            console.error('Lỗi server:', error.response.data);
+        } else {
+            console.error('Lỗi khác:', error.message);
+        }
+        throw error;
+    }
+};
+
+
+
 export const apiSharePost = async ({ postId }: { postId: string }) => {
     try {
         const response = await instance.post('/post/sharePost', { postId });
-        return response;
+        return response.data;
     } catch (error: any) {
         if (error.response) {
             console.error('Lỗi server:', error.response.data);
@@ -131,8 +161,8 @@ export const apiSharePost = async ({ postId }: { postId: string }) => {
 
 export const apiReport = async ({ postId }: { postId: string }) => {
     try {
-        const response = await instance.post('/api/reportPost', { postId });
-        return response;
+        const response = await instance.post('/post/reportPost', { postId });
+        return response.data;
     } catch (error: any) {
         if (error.response) {
             console.error('Lỗi server:', error.response.data);
@@ -145,8 +175,8 @@ export const apiReport = async ({ postId }: { postId: string }) => {
 
 export const apiDeletePost = async ({ postId }: { postId: string }) => {
     try {
-        const response = await instance.delete('/api/deletePost', { data: { postId } });
-        return response;
+        const response = await instance.delete('/post/deletePost', { data: { postId } });
+        return response.data;
     } catch (error: any) {
         if (error.response) {
             console.error('Lỗi server:', error.response.data);
@@ -156,3 +186,30 @@ export const apiDeletePost = async ({ postId }: { postId: string }) => {
         throw error;
     }
 };
+
+export const apiReportComment = async ({
+    commentId,
+    postId,
+    userId,
+}: {
+    commentId: string;
+    postId: string;
+    userId: string;
+}) => {
+    try {
+        const response = await instance.post('/post/reportComment', {
+            commentId,
+            postId,
+            userId,
+        });
+        return response.data;
+    } catch (error: any) {
+        if (error.response) {
+            console.error('Lỗi server:', error.response.data);
+        } else {
+            console.error('Lỗi khác:', error.message);
+        }
+        throw error;
+    }
+};
+

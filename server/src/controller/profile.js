@@ -8,7 +8,9 @@ const streamifier = require("streamifier");
 const { Relationship } = require('../model/relationship');
 
 // Lấy userId từ req.body thay vì req.params
-// Tìm relationship: tìm userId nếu tồn tại 1 trong 2, sau đó xem id bản thân có ở cái còn lại không
+
+// @profile.js (38-45): lấy relationship như sau:
+// Relationship.findOne({ $or: [{ requester: userId, recipient: currentUserId }, { requester: currentUserId, recipient: userId }] })
 
 export const getUserProfile = async (req, res) => {
   try {
@@ -28,31 +30,21 @@ export const getUserProfile = async (req, res) => {
 
     // Lấy relationship
     let relationship = null;
-    let alsoRelatedWithCurrentUser = false;
     const currentUserId = req.user?.id;
 
-    //console.log("CURRENT USER ID and userId: ", currentUserId, userId)
-
     if (currentUserId) {
-      // Tìm relationship có 1 trong 2 là userId truyền vào
+      // Relationship: lấy khi requester/recipient là userId và người còn lại là currentUserId
       const rel = await Relationship.findOne({
         $or: [
-          { requester: userId },
-          { recipient: userId }
+          { requester: userId, recipient: currentUserId },
+          { requester: currentUserId, recipient: userId }
         ]
       })
       .select('requester recipient status message acceptedAt wasRejected blockedBy isFollow interactionCount lastInteractionAt createdAt updatedAt')
       .lean();
 
       if (rel) {
-        // Kiểm tra nếu currentUserId là người còn lại trong mối quan hệ đó
-        if (
-          (String(rel.requester) === String(userId) && String(rel.recipient) === String(currentUserId)) ||
-          (String(rel.recipient) === String(userId) && String(rel.requester) === String(currentUserId))
-        ) {
-          relationship = rel;
-          alsoRelatedWithCurrentUser = true;
-        }
+        relationship = rel;
       }
     }
 

@@ -50,6 +50,14 @@ const ShowImage: React.FC<ShowImageProps> = ({
     username,
     createdAt
 }) => {
+    console.log("ShowImage images:", images);
+    console.log("ShowImage initialIndex:", initialIndex);
+    console.log("ShowImage onClose:", onClose);
+    console.log("ShowImage avatar:", avatar);
+    console.log("ShowImage avatarCroppedArea:", avatarCroppedArea);
+    console.log("ShowImage name:", name);
+    console.log("ShowImage username:", username);
+    console.log("ShowImage createdAt:", createdAt);
     const [current, setCurrent] = useState(initialIndex);
 
     // Ẩn scroll (overflow) khi open modal – theo mẫu ở PostingPopup.tsx (40-48)
@@ -94,7 +102,7 @@ const ShowImage: React.FC<ShowImageProps> = ({
 
     return (
         <div
-            className="fixed inset-0 z-[100] flex items-center justify-center"
+            className="fixed inset-0 z-4000 flex items-center justify-center"
             style={{ zIndex: 200 }}
         >
             {/* Overlay */}

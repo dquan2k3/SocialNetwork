@@ -5,8 +5,6 @@ import { useCheckLogin } from "./checkLogin";
 
 export function InitHooks() {
   useInitUser();
-  //useCheckLogin();
-
-
+  useCheckLogin();
   return
 }

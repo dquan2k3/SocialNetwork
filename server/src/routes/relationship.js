@@ -8,5 +8,12 @@ router.get('/getRelationship', verifyToken, relationshipsController.getRelations
 router.post('/cancelRelationship', verifyToken, relationshipsController.cancelRelationship);
 router.post('/acceptFriendRequest', verifyToken, relationshipsController.acceptFriendRequest);
 router.post('/rejectFriendRequest', verifyToken, relationshipsController.rejectFriendRequest);
+router.post('/blockUser', verifyToken, relationshipsController.blockUser);
+
+
+router.get('/getFriend', verifyToken, relationshipsController.getFriend);
+router.get('/getUserFriend', verifyToken, relationshipsController.getUserFriend);
+
+
 
 export default router

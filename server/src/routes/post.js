@@ -15,19 +15,25 @@ router.post(
 
 router.get('/getProfilePosts', verifyToken, postController.getProfilePosts)
 router.get('/homePosts', verifyToken, postController.getAllPosts)
-router.post('/singlePost', verifyToken, postController.getSinglePost)
+router.get('/singlePost', verifyToken, postController.getSinglePost)
 
 router.post('/getImage', verifyToken, postController.getImage)
 router.post('/getVideo', verifyToken, postController.getVideo)
+router.post('/getMedia', verifyToken, postController.getMedia)
+
 
 router.post('/reactPost', verifyToken, postController.reactPost)
 router.post('/commentPost', verifyToken, postController.commentPost)
+router.delete('/deleteComment', verifyToken, postController.deleteComment)
+
+router.get('/loadComment', verifyToken, postController.loadComment)
 router.get('/loadCountReact', verifyToken, postController.loadCountReact)
 router.post('/sharePost', verifyToken, postController.sharePost)
 
 router.post('/searchPost', verifyToken, postController.searchPost)
 
 router.post('/reportPost', verifyToken, postController.reportPost)
+router.post('/reportComment', verifyToken, postController.reportComment)
 router.delete('/deletePost', verifyToken, postController.deletePost)
 
 export default router

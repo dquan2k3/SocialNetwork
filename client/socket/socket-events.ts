@@ -8,8 +8,13 @@ export const SOCKET_EVENTS = {
   MESSAGE_SENT: "messageSent",
   MESSAGE_ERROR: "messageError",
 
+  //notification
+  MESSAGE_NOTIFICATION: "messageNotification",
+  NOTIFICATION: "notification",
+
   // User online mapping
   USER_CONNECT: "userConnect",
+  ONLINE_USER: "onlineUser",
 
   // Room events (group chat)
   JOIN_ROOM: "joinRoom",

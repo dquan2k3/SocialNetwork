@@ -10,6 +10,9 @@ import {
     faComment,
 } from "@fortawesome/free-solid-svg-icons";
 
+// Import useSelector for redux user selector
+import { useSelector } from "react-redux";
+
 const reactionColors = {
     like: { emoji: "text-blue-500", text: "text-blue-500 dark:text-blue-400 font-bold", icon: "#3b82f6" },
     love: { emoji: "text-red-500", text: "text-red-500 font-bold", icon: "#ef4444" },
@@ -48,6 +51,8 @@ interface PostType {
     commentCount?: number;
     shareCount?: number;
     hasShared?: boolean;
+    author?: any; // Possibility the author can be an object or id
+    userId?: string; // In case author is named userId
     [key: string]: any;
 }
 
@@ -127,6 +132,12 @@ const PostReactButton: React.FC<PostReactButtonProps> = ({
     onShare,
     isOnPost = false,
 }) => {
+    const user = useSelector((state: any) => state.user);
+    const myId = user?.userId;
+    
+    const posterId: string | undefined = post.user;
+    const isShareDisabled = (myId && posterId && myId === posterId);
+
     // State that is kept for menu interactions only (not for react or count status)
     const [hover, setHover] = useState<boolean>(false);
     const [showMenu, setShowMenu] = useState<boolean>(false);
@@ -419,7 +430,9 @@ const PostReactButton: React.FC<PostReactButtonProps> = ({
             ? countState[name]
             : 0;
 
+    // COMMENT COUNT: chỉ lấy từ props, không dùng delta
     const commentCount = typeof post.commentCount === "number" ? post.commentCount : 0;
+
     const shareCount = typeof post.shareCount === "number" ? post.shareCount : 0;
 
     // Always use post._id as postId, as required by prompt.
@@ -438,6 +451,13 @@ const PostReactButton: React.FC<PostReactButtonProps> = ({
         shareBtnText = "Đã chia sẻ";
         shareBtnTitle = "Hủy chia sẻ";
     }
+
+    // Chỉ gọi onComment nếu có, không cập nhật delta
+    const handleCommentClick = () => {
+        if (typeof onComment === "function") {
+            onComment();
+        }
+    };
 
     return (
         <div className="flex flex-col pt-2" ref={containerRef}>
@@ -465,19 +485,21 @@ const PostReactButton: React.FC<PostReactButtonProps> = ({
                             );
                         })
                     ) : (
-                        // Hiển thị 'biểu tượng' '...' 'total'
-                        <div
-                            className="flex items-center gap-1 px-2 py-1 rounded-full bg-gray-700/10"
-                            style={{ fontSize: 16, fontWeight: 500, color: "white", whiteSpace: "nowrap" }}
-                        >
-                            <span className="emoji" style={{ fontSize: 20 }}>
-                                <FontAwesomeIcon icon={faThumbsUp} style={{ color: reactionColors.like.icon }} />
-                            </span>
-                            <span style={{ fontSize: 20, color: "white", margin: "0 4px" }}>...</span>
-                            <span style={{ minWidth: 20, textAlign: "center", color: "white" }}>
-                                {totalReactionCount}
-                            </span>
-                        </div>
+                        // Chỉ hiển thị khi có react (totalReactionCount > 0)
+                        totalReactionCount > 0 && (
+                            <div
+                                className="flex items-center gap-1 px-2 py-1 rounded-full bg-gray-700/10"
+                                style={{ fontSize: 16, fontWeight: 500, color: "white", whiteSpace: "nowrap" }}
+                            >
+                                <span className="emoji" style={{ fontSize: 20 }}>
+                                    <FontAwesomeIcon icon={faThumbsUp} style={{ color: reactionColors.like.icon }} />
+                                </span>
+                                <span style={{ fontSize: 20, color: "white", margin: "0 4px" }}>...</span>
+                                <span style={{ minWidth: 20, textAlign: "center", color: "white" }}>
+                                    {totalReactionCount}
+                                </span>
+                            </div>
+                        )
                     )}
                 </div>
                 <div className="flex-grow" />
@@ -568,7 +590,7 @@ const PostReactButton: React.FC<PostReactButtonProps> = ({
                         className="flex items-center justify-center gap-1 px-3 py-1 rounded-md transition-colors border-transparent w-full text-[#1c1c1d] dark:text-white hover:bg-gray-100/20 hover:border-gray-300 bg-transparent cursor-pointer whitespace-nowrap"
                         type="button"
                         disabled={isOnPost}
-                        onClick={isOnPost ? undefined : onComment}
+                        onClick={isOnPost ? undefined : handleCommentClick}
                         aria-disabled={isOnPost}
                         tabIndex={isOnPost ? -1 : 0}
                     >
@@ -582,11 +604,25 @@ const PostReactButton: React.FC<PostReactButtonProps> = ({
                 {!isNarrow && (
                     <div className="w-full flex items-center">
                         <button
-                            className="flex items-center justify-center gap-1 px-3 py-1 rounded-md transition-colors border-transparent w-full hover:bg-gray-100/20 hover:border-gray-300 bg-transparent text-[#1c1c1d] dark:text-white cursor-pointer whitespace-nowrap"
+                            className={
+                                `flex items-center justify-center gap-1 px-3 py-1 rounded-md transition-colors border-transparent w-full 
+                                hover:bg-gray-100/20 hover:border-gray-300 bg-transparent text-[#1c1c1d] dark:text-white 
+                                whitespace-nowrap
+                                ${isShareDisabled ? "opacity-60 cursor-not-allowed !bg-transparent !text-gray-400 dark:!text-gray-500 hover:!bg-transparent hover:!text-gray-400 dark:hover:!bg-transparent dark:hover:!text-gray-500" : "cursor-pointer"}`
+                            }
                             type="button"
                             onClick={onShare}
                             title={shareBtnTitle}
-                            style={hasShared ? { color: "#3b82f6", fontWeight: "bold" } : {}}
+                            style={
+                                isShareDisabled
+                                    ? { }
+                                    : hasShared
+                                        ? { color: "#3b82f6", fontWeight: "bold" }
+                                        : {}
+                            }
+                            disabled={isShareDisabled}
+                            aria-disabled={isShareDisabled}
+                            tabIndex={isShareDisabled ? -1 : 0}
                         >
                             <span className="text-[22px]">
                                 <FontAwesomeIcon icon={faShare} />
