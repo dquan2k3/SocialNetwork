@@ -4,8 +4,9 @@ import { profileModel } from '../model/profile.js';
 import { reportModel } from "../model/report.js";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 const { Relationship } = require('../model/relationship');
-
 const redis = require("../config/redis.js");
+import { createGroupNotify, disbandGroupNotify, joinGroupNotify, leaveGroupNotify } from '../services/notification.js';
+
 
 const fs = require("fs");
 const cloudinary = require('../config/cloudinaryConfig');
@@ -176,7 +177,8 @@ export const getIncomeUser = async (req, res) => {
     }
 };
 
-// Lấy danh sách user trong group (trả về userId, name, avatar, avatarCroppedArea)
+// Lấy danh sách user trong group (trả về userId, name, avatar, avatarCroppedArea, status)
+// Không load member có status = pending
 export const getGroupUser = async (req, res) => {
     try {
         const { conversationId } = req.params;
@@ -191,20 +193,25 @@ export const getGroupUser = async (req, res) => {
         }
 
         // members: [{ userId, ... }]
-        const memberUserIds = group.members?.map(m => m.userId) || [];
+        // Lọc chỉ member có status = 'active'
+        const activeMembers = (group.members || []).filter(m => m.status === 'active');
+        const activeMemberUserIds = activeMembers.map(m => m.userId);
 
-        console.log("memberUserIds:", memberUserIds);
-
-        // Lấy thông tin từng user: name, avatar, avatarCroppedArea từ bio
+        // Lấy thông tin từng user: name, avatar, avatarCroppedArea từ bio, status từ profile
         const [bios, profiles] = await Promise.all([
             bioModel.find(
-                { userid: { $in: memberUserIds } },
+                { userid: { $in: activeMemberUserIds } },
                 'userid avatar avatarCroppedArea'
             ).lean(),
-            profileModel.find({ user: { $in: memberUserIds } }, 'user name').lean()
+            profileModel.find(
+                { user: { $in: activeMemberUserIds } },
+                'user name status'
+            ).lean()
         ]);
+
         const biosMap = {};
         const namesMap = {};
+        const statusMap = {};
 
         bios.forEach(b => {
             biosMap[b.userid] = {
@@ -212,16 +219,19 @@ export const getGroupUser = async (req, res) => {
                 avatarCroppedArea: b.avatarCroppedArea || null
             };
         });
-        profiles.forEach(p => { namesMap[p.user] = p.name; });
+        profiles.forEach(p => {
+            namesMap[p.user] = p.name;
+            statusMap[p.user] = p.status || null;
+        });
 
-        // Trả về list user trong group (userId, name, avatar, avatarCroppedArea)
-        const users = memberUserIds.map(uid => ({
+        // Trả về list user trong group (userId, name, avatar, avatarCroppedArea, status)
+        const users = activeMemberUserIds.map(uid => ({
             userId: uid,
             name: namesMap[uid] || null,
             avatar: biosMap[uid]?.avatar || null,
-            avatarCroppedArea: biosMap[uid]?.avatarCroppedArea || null
+            avatarCroppedArea: biosMap[uid]?.avatarCroppedArea || null,
+            status: statusMap[uid] || null
         }));
-        console.log("users:", users);
 
         return res.json({ users });
     } catch (error) {
@@ -381,6 +391,7 @@ export const getMessageList = async (req, res) => {
         let conversations;
         if (conversationId) {
             // Kiểm tra xem conversationId có thuộc về user không
+            // Nếu là group, cũng cần kiểm tra status của member userId không phải 'pending'
             const conv = await conversationModel.findOne({
                 _id: conversationId,
                 'members.userId': String(userId)
@@ -391,14 +402,38 @@ export const getMessageList = async (req, res) => {
             if (!conv) {
                 return res.status(404).json({ error: "Conversation not found or you are not a member." });
             }
+
+            // Nếu là group và status của userId là pending thì không trả về
+            if (
+                conv.type === "group" &&
+                conv.members &&
+                Array.isArray(conv.members)
+            ) {
+                const selfMember = conv.members.find(m => String(m.userId) === String(userId));
+                if (selfMember && selfMember.status === "pending") {
+                    return res.json({ conversationList: [] });
+                }
+            }
+
             conversations = [conv];
         } else {
             // Lấy tất cả conversation của user
-            conversations = await conversationModel.find({
+            let allUserConvs = await conversationModel.find({
                 'members.userId': String(userId)
             }).select(
                 '_id type members owner groupAvatar groupName requireApproval createdAt updatedAt'
             ).lean();
+
+            // Lọc ra các nhóm mà bản thân có status là pending
+            allUserConvs = allUserConvs.filter(conv => {
+                if (conv.type !== "group") return true; // chỉ xử lý group
+                if (!(conv.members && Array.isArray(conv.members))) return true;
+                const selfMember = conv.members.find(m => String(m.userId) === String(userId));
+                // Nếu status là pending, bỏ qua nhóm này
+                return !(selfMember && selfMember.status === "pending");
+            });
+
+            conversations = allUserConvs;
         }
 
         // Gom kết quả trả về cho từng conversation
@@ -485,23 +520,26 @@ export const getMessageList = async (req, res) => {
     }
 };
 
-
 // Hàm lấy danh sách group conversation theo userId, chỉ trả về conversationId
 export const getGroupConversation = async (userId) => {
     if (!userId) {
         throw new Error("userId is required");
     }
 
-    // Lấy tất cả conversation type group của user, chỉ chọn _id
+    // Lấy tất cả conversation type group của user, bao gồm cả members để lấy status
     const groupConversations = await conversationModel.find({
         type: "group",
         'members.userId': String(userId)
-    }).select('_id');
+    }).select('_id members');
 
-    // Chỉ trả về mảng các conversationId
-    return groupConversations.map(conv => ({
-        conversationId: conv._id.toString()
-    }));
+    // Trả về mảng các conversationId kèm status của user trong nhóm
+    return groupConversations.map(conv => {
+        const userMember = conv.members.find(m => String(m.userId) === String(userId));
+        return {
+            conversationId: conv._id.toString(),
+            status: userMember?.status || 'pending'
+        };
+    });
 };
 
 
@@ -548,6 +586,8 @@ export const createGroupConversation = async (req, res) => {
             }
         }
 
+        //await createGroupNotify("groupDoc._id", avatarUrl, groupName, String(creatorId));
+
         // Tạo group conversation, thêm owner là bản thân
         const groupDoc = await conversationModel.create({
             type: "group",
@@ -557,6 +597,12 @@ export const createGroupConversation = async (req, res) => {
             members: memberList,
             owner: String(creatorId)
         });
+
+        await createGroupNotify(groupDoc._id, groupDoc.groupAvatar, groupDoc.groupName, groupDoc.owner);
+
+        // Gửi thông báo tạo group conversation tới các thành viên (gọi hàm từ groupConversationIo)
+        
+        
 
         // Trả về dữ liệu group
         return res.json({
@@ -758,11 +804,20 @@ export const disbandGroupConversation = async (req, res) => {
             return res.status(400).json({ success: false, message: "Đây không phải là nhóm chat, không thể giải tán." });
         }
 
+        // Lấy danh sách userId của các thành viên group
+        const memberUserIds = Array.isArray(conversation.members)
+            ? conversation.members.map(m => m.userId)
+            : [];
+
         // Xóa conversation
         await conversationModel.findByIdAndDelete(conversationId);
 
         // Xóa tất cả tin nhắn trong nhóm
         await messageModel.deleteMany({ conversationId });
+        
+        // Gửi thông báo giải tán nhóm
+        await disbandGroupNotify(conversationId, memberUserIds);
+
 
         // Xóa các report liên quan đến nhóm
         await reportModel.deleteMany({ type: "message", conversationId: conversationId });
@@ -825,6 +880,18 @@ export const leaveGroupConversation = async (req, res) => {
                 await conversationModel.findByIdAndDelete(conversationId);
                 await messageModel.deleteMany({ conversationId });
                 await reportModel.deleteMany({ type: "message", conversationId });
+
+                // Gọi hàm leaveGroupNotify để thông báo giải tán tới chính user cuối cùng này
+                try {
+                    if (typeof leaveGroupNotify === 'function') {
+                        await leaveGroupNotify(conversationId, userId);
+                    } else {
+                        console.warn("[leaveGroupConversation] leaveGroupNotify không phải là function hoặc chưa tồn tại!");
+                    }
+                } catch (notifyErr) {
+                    console.error("[leaveGroupConversation] Lỗi khi gọi leaveGroupNotify:", notifyErr);
+                }
+
                 return res.status(200).json({
                     success: true,
                     message: "Bạn là người cuối cùng. Nhóm đã bị xóa hoàn toàn."
@@ -838,6 +905,17 @@ export const leaveGroupConversation = async (req, res) => {
         }
 
         await conversation.save();
+
+        // Gọi hàm leaveGroupNotify để thông báo rời nhóm tới user này
+        try {
+            if (typeof leaveGroupNotify === 'function') {
+                await leaveGroupNotify(conversationId, userId);
+            } else {
+                console.warn("[leaveGroupConversation] leaveGroupNotify không phải là function hoặc chưa tồn tại!");
+            }
+        } catch (notifyErr) {
+            console.error("[leaveGroupConversation] Lỗi khi gọi leaveGroupNotify:", notifyErr);
+        }
 
         return res.status(200).json({
             success: true,
@@ -905,9 +983,12 @@ export const getOnlineUser = async (req, res) => {
         }).lean();
 
         const userIdStr = String(userId);
-        const friendIds = relationships
+        let friendIds = relationships
             .map(rel => rel.requester.toString() === userIdStr ? rel.recipient : rel.requester)
             .map(id => id.toString());
+
+        // Không lấy bản thân (bản thân không bao giờ là bạn với chính mình, precaution)
+        friendIds = friendIds.filter(fid => fid !== userIdStr);
 
         if (!friendIds.length) {
             return res.json({ success: true, friends: [] });
@@ -918,9 +999,8 @@ export const getOnlineUser = async (req, res) => {
         try {
             // Lấy tất cả ID user online từ redis
             const allOnlineIdsRaw = await redis.sMembers("online_users");
-            // Lọc ra friendIds nào nằm trong online
-            console.log(allOnlineIdsRaw)
-            onlineFriendIds = friendIds.filter(fid => allOnlineIdsRaw.includes(fid));
+            // Lọc ra friendIds nào nằm trong online, không lấy chính bản thân (dù có online)
+            onlineFriendIds = friendIds.filter(fid => allOnlineIdsRaw.includes(fid) && fid !== userIdStr);
         } catch (redisErr) {
             // Nếu lỗi redis, vẫn trả về rỗng
             console.error("Lỗi redis trong getOnlineUser:", redisErr);
@@ -1172,5 +1252,550 @@ exports.summaryGroupConversation = async (req, res) => {
     } catch (error) {
         console.error("Error in getLatestMessages:", error);
         res.status(500).json({ success: false, message: "Server error in getLatestMessages." });
+    }
+};
+
+// Controller: Lấy tên, avatar, đếm thành viên, requireApproval, và trả về status của user (nếu có) trong group
+exports.loadInfoGroupConversation = async (req, res) => {
+    try {
+        const { conversationId } = req.query;
+        // Lấy userId từ req.user nếu có xác thực
+        const userId = req.user && req.user.id ? req.user.id.toString() : null;
+
+        if (!conversationId) {
+            return res.status(400).json({ success: false, message: "Missing conversationId" });
+        }
+
+        // Lấy thông tin group conversation, chỉ lấy trường cần thiết
+        const groupConversation = await conversationModel.findOne(
+            { _id: conversationId, type: 'group' },
+            { groupName: 1, groupAvatar: 1, members: 1, requireApproval: 1 }
+        ).lean();
+
+        if (!groupConversation) {
+            return res.status(404).json({ success: false, message: "Group conversation not found" });
+        }
+
+        // Đếm số thành viên (chỉ status active mới thật sự là member)
+        let memberCount = 0;
+        if (Array.isArray(groupConversation.members) && groupConversation.members.length) {
+            // memberCount: chỉ những member status === "active"
+            memberCount = groupConversation.members.reduce((acc, m) => {
+                if (m && (m.status === "active" || !m.status)) return acc + 1;
+                return acc;
+            }, 0);
+        }
+
+        // Trả về status của user trong group (active, pending, removed, hoặc null nếu chưa tham gia)
+        let status = null;
+        if (userId && Array.isArray(groupConversation.members)) {
+            const matchingMember = groupConversation.members.find(
+                m => m && m.userId && m.userId.toString() === userId
+            );
+            if (matchingMember) {
+                status = matchingMember.status || "active"; // nếu thiếu status thì mặc định là active
+            }
+        }
+
+        return res.json({
+            success: true,
+            name: groupConversation.groupName || '',
+            avatar: groupConversation.groupAvatar || '',
+            memberCount,
+            requireApproval: !!groupConversation.requireApproval,
+            status // status của user đối với group này (active, pending, removed, null)
+        });
+    } catch (error) {
+        console.error("Error in loadInfoGroupConversation:", error);
+        res.status(500).json({ success: false, message: "Server error in loadInfoGroupConversation." });
+    }
+};
+
+// Cho phép user gửi yêu cầu tham gia vào group chat (yêu cầu phê duyệt)
+exports.applyJoinGroupConversation = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        const { conversationId } = req.body;
+
+        if (!userId) {
+            return res.status(401).json({ success: false, message: "Không xác thực người dùng." });
+        }
+        if (!conversationId) {
+            return res.status(400).json({ success: false, message: "Thiếu conversationId." });
+        }
+
+        // Lấy group conversation
+        const group = await conversationModel.findOne(
+            { _id: conversationId, type: 'group' },
+            { members: 1, requireApproval: 1, groupAvatar: 1, groupName: 1, owner: 1 }
+        ).lean();
+        if (!group) {
+            return res.status(404).json({ success: false, message: "Không tìm thấy nhóm." });
+        }
+
+        // Kiểm tra nếu đã là thành viên (active hoặc pending)
+        if (Array.isArray(group.members) && group.members.some(m => m && m.userId && m.userId.toString() === userId)) {
+            const member = group.members.find(m => m && m.userId && m.userId.toString() === userId);
+            if (member.status === 'pending') {
+                return res.status(200).json({
+                    success: true,
+                    joined: false,
+                    message: "Bạn đã gửi yêu cầu tham gia nhóm này, vui lòng chờ phê duyệt."
+                });
+            }
+            return res.status(200).json({
+                success: true,
+                joined: true,
+                message: "Bạn đã là thành viên của nhóm này."
+            });
+        }
+
+        if (!group.requireApproval) {
+            // Không cần phê duyệt: thêm luôn member status active
+            await conversationModel.updateOne(
+                { _id: conversationId },
+                { $push: { members: { userId: userId, status: 'active', joinedAt: new Date() } } }
+            );
+
+            // Gọi hàm thông báo join group
+            if (typeof joinGroupNotify === 'function') {
+                try {
+                    await joinGroupNotify(
+                        userId,
+                        conversationId,
+                        group.groupAvatar || '',
+                        group.groupName || '',
+                        group.owner || ''
+                    );
+                } catch (notifyErr) {
+                    console.error("[applyJoinGroupConversation] Lỗi khi gọi joinGroupNotify:", notifyErr);
+                }
+            } else {
+                console.warn("[applyJoinGroupConversation] joinGroupNotify không phải là function hoặc chưa tồn tại!");
+            }
+
+            return res.json({
+                success: true,
+                joined: true,
+                message: "Đã tham gia nhóm thành công."
+            });
+        } else {
+            // Cần phê duyệt: thêm member status pending
+            await conversationModel.updateOne(
+                { _id: conversationId },
+                { $push: { members: { userId: userId, status: 'pending', joinedAt: new Date() } } }
+            );
+            return res.json({
+                success: true,
+                joined: false,
+                message: "Đã gửi yêu cầu tham gia nhóm, chờ phê duyệt."
+            });
+        }
+    } catch (error) {
+        console.error("Error in applyJoinGroupConversation:", error);
+        res.status(500).json({ success: false, message: "Server error in applyJoinGroupConversation." });
+    }
+};
+
+// Hủy yêu cầu tham gia nhóm (Cancel apply join group conversation)
+exports.cancelApplyJoinGroupConversation = async (req, res) => {
+    try {
+        const { conversationId } = req.body;
+        const userId = req.user?.id;
+
+        if (!conversationId || !userId) {
+            return res.status(400).json({ success: false, message: "Thiếu conversationId hoặc userId." });
+        }
+
+        // Kiểm tra xem member với status 'pending' tồn tại không
+        const group = await conversationModel.findOne({ _id: conversationId, "members.userId": userId });
+        if (!group) {
+            return res.status(404).json({ success: false, message: "Không tìm thấy nhóm hoặc bạn chưa gửi yêu cầu tham gia." });
+        }
+
+        const member = group.members.find(m => m.userId && m.userId.toString() === userId);
+
+        if (!member || member.status !== 'pending') {
+            return res.status(400).json({ success: false, message: "Không có yêu cầu tham gia đang chờ được phê duyệt." });
+        }
+
+        // Xóa member có status 'pending'
+        await conversationModel.updateOne(
+            { _id: conversationId },
+            { $pull: { members: { userId: userId, status: 'pending' } } }
+        );
+
+        return res.json({ success: true, message: "Đã hủy yêu cầu tham gia nhóm thành công." });
+    } catch (error) {
+        console.error("Error in cancelApplyJoinGroupConversation:", error);
+        res.status(500).json({ success: false, message: "Server error in cancelApplyJoinGroupConversation." });
+    }
+};
+
+
+// API: GET /conversation/loadGroupManager
+exports.loadGroupManager = async (req, res) => {
+    try {
+        // conversationId có thể từ params hoặc query
+        const conversationId = req.query.conversationId || req.params.conversationId;
+        const userId = req.user?.id;
+
+        if (!conversationId) {
+            return res.status(400).json({ success: false, message: "Thiếu conversationId." });
+        }
+
+        // Lấy group thông tin cơ bản và lấy danh sách userId của tất cả thành viên
+        const group = await conversationModel
+            .findById(conversationId)
+            .lean();
+
+        if (!group || group.type !== 'group') {
+            return res.status(404).json({ success: false, message: 'Nhóm không tồn tại.' });
+        }
+
+        // NOTE: Trong schema là trường 'owner', chứ không phải 'ownerId'
+        const owner = group.owner?.toString?.() || (group.owner + "");
+        const requireApproval = !!group.requireApproval;
+
+        // CHỈ CHẠY NẾU LÀ OWNER
+        if (!userId || owner !== userId) {
+            return res.status(403).json({ success: false, message: 'Chỉ chủ nhóm mới được xem thông tin quản lý nhóm.' });
+        }
+
+        // Lấy danh sách userId (string)
+        const memberUserIds = (group.members || [])
+            .map(m => (typeof m.userId === 'object' && m.userId.toString) ? m.userId.toString() : String(m.userId))
+            .filter(Boolean);
+
+        // Lấy profile name
+        const profiles = await profileModel.find(
+            { user: { $in: memberUserIds } },
+            'user name'
+        ).lean();
+
+        // Lấy bio avatar, avatarCroppedArea
+        const bios = await bioModel.find(
+            { userid: { $in: memberUserIds } },
+            'userid avatar avatarCroppedArea'
+        ).lean();
+
+        // Map userId -> profile/bio
+        const userIdToProfile = {};
+        const userIdToBio = {};
+        for (const p of profiles) {
+            userIdToProfile[String(p.user)] = p;
+        }
+        for (const b of bios) {
+            userIdToBio[String(b.userid)] = b;
+        }
+
+        // memberInfo chỉ cho chủ group, hiển thị trạng thái thành viên của mình nếu muốn
+        let memberInfo = null;
+        let pending = false;
+        if (userId) {
+            const found = (group.members || []).find(
+                m => {
+                    const mUserId = (typeof m.userId === 'object' && m.userId.toString) ? m.userId.toString() : String(m.userId);
+                    return mUserId === userId;
+                }
+            );
+            if (found) {
+                if (found.status === 'active') {
+                    const prof = userIdToProfile[userId];
+                    const bio = userIdToBio[userId];
+                    memberInfo = {
+                        id: userId,
+                        name: prof?.name,
+                        avatar: bio?.avatar,
+                        avatarCroppedArea: bio?.avatarCroppedArea,
+                        joinedAt: found.joinedAt,
+                        status: found.status
+                    };
+                } else if (found.status === 'pending') {
+                    pending = true;
+                }
+            }
+        }
+
+        // Chuẩn hóa danh sách thành viên (status === 'active'), thêm avatarCroppedArea
+        const members = (group.members || [])
+            .filter(m => m.status === 'active' && m.userId)
+            .map(m => {
+                const mId = (typeof m.userId === 'object' && m.userId.toString) ? m.userId.toString() : String(m.userId);
+                return {
+                    id: mId,
+                    name: userIdToProfile[mId]?.name,
+                    avatar: userIdToBio[mId]?.avatar,
+                    avatarCroppedArea: userIdToBio[mId]?.avatarCroppedArea,
+                    joinedAt: m.joinedAt
+                }
+            });
+
+        // Chuẩn hóa danh sách chờ phê duyệt (status === 'pending'), thêm avatarCroppedArea
+        const waiting = (group.members || [])
+            .filter(m => m.status === 'pending' && m.userId)
+            .map(m => {
+                const mId = (typeof m.userId === 'object' && m.userId.toString) ? m.userId.toString() : String(m.userId);
+                return {
+                    id: mId,
+                    name: userIdToProfile[mId]?.name,
+                    avatar: userIdToBio[mId]?.avatar,
+                    avatarCroppedArea: userIdToBio[mId]?.avatarCroppedArea,
+                    joinedAt: m.joinedAt
+                }
+            });
+
+        // Đúng các trường cần trả về và đảm bảo memberCount đếm đúng số active
+        return res.json({
+            success: true,
+            needApproval: requireApproval, // legacy field, giữ lại
+            ownerId: owner,
+            pending,
+            name: group.groupName || "",
+            avatar: group.groupAvatar || "",
+            memberCount: members.length,
+            requireApproval,
+            members,
+            waiting,
+        });
+    } catch (error) {
+        console.error("Error in loadGroupManager:", error);
+        res.status(500).json({ success: false, message: "Server error in loadGroupManager." });
+    }
+};
+
+// Đảo ngược trạng thái requireApproval cho nhóm: nếu true thì thành false, false thì thành true
+// POST /conversation/changeNeedApproval
+exports.changeNeedApproval = async (req, res) => {
+    try {
+        const { conversationId } = req.body;
+        if (!conversationId) {
+            return res.status(400).json({ success: false, message: 'Missing conversationId.' });
+        }
+
+        const group = await conversationModel.findById(conversationId);
+        if (!group || group.type !== 'group') {
+            return res.status(404).json({ success: false, message: 'Group not found.' });
+        }
+
+        group.requireApproval = !group.requireApproval; // toggle
+
+        await group.save();
+
+        return res.json({ success: true, requireApproval: group.requireApproval });
+    } catch (error) {
+        console.error("Error in changeNeedApproval:", error);
+        res.status(500).json({ success: false, message: "Server error in changeNeedApproval." });
+    }
+};
+
+// POST /conversation/declineUser
+exports.declineUser = async (req, res) => {
+    try {
+        const { conversationId, userId } = req.body;
+        if (!conversationId || !userId) {
+            return res.status(400).json({ success: false, message: 'Thiếu conversationId hoặc userId.' });
+        }
+
+        const conversation = await conversationModel.findById(conversationId);
+        if (!conversation) {
+            return res.status(404).json({ success: false, message: 'Không tìm thấy cuộc trò chuyện.' });
+        }
+
+        // Chỉ áp dụng cho nhóm
+        if (conversation.type !== 'group') {
+            return res.status(400).json({ success: false, message: 'Loại cuộc trò chuyện không hợp lệ.' });
+        }
+
+        // Tìm thành viên có trạng thái pending
+        const memberIndex = conversation.members.findIndex(
+            m => String(m.userId) === String(userId) && m.status === 'pending'
+        );
+
+        if (memberIndex === -1) {
+            return res.status(400).json({ success: false, message: 'Người dùng không nằm trong danh sách chờ.' });
+        }
+
+        // Xoá người dùng khỏi danh sách thành viên
+        conversation.members.splice(memberIndex, 1);
+
+        await conversation.save();
+
+        return res.json({ success: true, message: "Đã từ chối yêu cầu tham gia nhóm (người dùng đã bị xóa khỏi danh sách chờ)." });
+    } catch (error) {
+        console.error("Lỗi ở declineUser:", error);
+        res.status(500).json({ success: false, message: "Lỗi server trong declineUser." });
+    }
+};
+
+// Thêm: API kickUser
+// POST /conversation/kickUser
+exports.kickUser = async (req, res) => {
+    try {
+        const { conversationId, userId } = req.body;
+        const ownerId = req.user?.id;
+
+        if (!conversationId || !userId) {
+            return res.status(400).json({ success: false, message: 'Thiếu conversationId hoặc userId.' });
+        }
+
+        // Lấy group
+        const group = await conversationModel.findById(conversationId);
+
+        if (!group || group.type !== 'group') {
+            return res.status(404).json({ success: false, message: 'Nhóm không tồn tại.' });
+        }
+
+        // Kiểm tra quyền owner
+        const owner = group.owner?.toString() || (group.owner + "");
+        if (!ownerId || ownerId !== owner) {
+            return res.status(403).json({ success: false, message: 'Bạn không phải chủ nhóm.' });
+        }
+
+        // Không cho owner tự kick chính mình
+        if (userId === owner) {
+            return res.status(400).json({ success: false, message: 'Chủ nhóm không thể tự xóa chính mình.' });
+        }
+
+        // Tìm và xoá thành viên từ group.members (bất kể status)
+        const memberIndex = group.members.findIndex(
+            m => String(m.userId) === String(userId)
+        );
+
+        if (memberIndex === -1) {
+            return res.status(404).json({ success: false, message: 'Không tìm thấy thành viên.' });
+        }
+
+        group.members.splice(memberIndex, 1);
+        await group.save();
+
+        // Notify user vừa bị kick (emit ra socket theo @notification.js 178-228)
+        try {
+            await leaveGroupNotify(conversationId, userId);
+        } catch (notifyErr) {
+            console.error("Error when notifying kicked member:", notifyErr);
+            // Still return success, only log the notification failure
+        }
+
+        return res.json({ success: true, message: "Đã xóa thành viên ra khỏi nhóm." });
+    } catch (error) {
+        console.error("Lỗi ở kickUser:", error);
+        res.status(500).json({ success: false, message: "Lỗi server trong kickUser." });
+    }
+};
+
+
+
+exports.approveUser = async (req, res) => {
+    try {
+        const { conversationId, userId } = req.body;
+        const ownerId = req.user?.id;
+
+        if (!conversationId || !userId) {
+            return res.status(400).json({ success: false, message: 'Thiếu conversationId hoặc userId.' });
+        }
+
+        // Lấy group
+        const group = await conversationModel.findById(conversationId);
+
+        if (!group || group.type !== 'group') {
+            return res.status(404).json({ success: false, message: 'Nhóm không tồn tại.' });
+        }
+
+        // Kiểm tra quyền owner
+        const owner = group.owner?.toString() || (group.owner + "");
+        if (!ownerId || ownerId !== owner) {
+            return res.status(403).json({ success: false, message: 'Bạn không phải chủ nhóm.' });
+        }
+
+        // Tìm thành viên trạng thái pending
+        const member = group.members.find(
+            m => String(m.userId) === String(userId) && m.status === 'pending'
+        );
+
+        if (!member) {
+            return res.status(404).json({ success: false, message: 'Người dùng không trong danh sách chờ phê duyệt.' });
+        }
+
+        // Cập nhật trạng thái thành viên thành active + thêm joinedAt nếu chưa có
+        member.status = 'active';
+        if (!member.joinedAt) {
+            member.joinedAt = new Date();
+        }
+
+        await group.save();
+
+        // Lấy dữ liệu cần thiết để truyền vào joinGroupNotify
+        const groupAvatar = group.groupAvatar || null;
+        const groupName = group.groupName || null;
+        // Truyền owner dạng String id
+        const ownerIdStr = owner;
+
+        // Gọi hàm joinGroupNotify
+        try {
+            await joinGroupNotify(
+                userId,
+                conversationId,
+                groupAvatar,
+                groupName,
+                ownerIdStr
+            );
+        } catch (err) {
+            console.error("Lỗi ở joinGroupNotify khi approveUser:", err);
+            // Không throw lên để tránh lỗi HTTP - chỉ log
+        }
+
+        return res.json({ success: true, message: 'Đã duyệt thành viên vào nhóm.' });
+    } catch (error) {
+        console.error("Lỗi ở approveUser:", error);
+        res.status(500).json({ success: false, message: "Lỗi server trong approveUser." });
+    }
+};
+
+// Chuyển quyền owner nhóm chat
+exports.transferOwner = async (req, res) => {
+    try {
+        const { conversationId, userId } = req.body;
+
+        if (!conversationId || !userId) {
+            console.error("transferOwner error: Thiếu conversationId hoặc userId.", { body: req.body });
+            return res.status(400).json({ success: false, message: 'Thiếu conversationId hoặc userId.' });
+        }
+
+        const group = await conversationModel.findById(conversationId);
+
+        if (!group) {
+            console.error("transferOwner error: Không tìm thấy nhóm.", { conversationId });
+            return res.status(404).json({ success: false, message: 'Không tìm thấy nhóm.' });
+        }
+
+        // Kiểm tra xem requester có phải là chủ nhóm không
+        const ownerId = group.owner?.toString() || (group.owner + "");
+        const requesterId = req.user?.id?.toString() || req.user?._id?.toString();
+
+        if (!requesterId || requesterId !== ownerId) {
+            console.error("transferOwner error: request không phải chủ nhóm.", { requesterId, ownerId });
+            return res.status(403).json({ success: false, message: 'Bạn không phải chủ nhóm.' });
+        }
+
+        // Kiểm tra userId muốn chuyển owner có phải là thành viên không
+        const newOwnerMember = group.members.find(
+            m => String(m.userId) === String(userId) && m.status === 'active'
+        );
+
+        if (!newOwnerMember) {
+            console.error("transferOwner error: Người dùng không phải thành viên hợp lệ.", { userId });
+            return res.status(404).json({ success: false, message: 'Người dùng không phải thành viên hợp lệ.' });
+        }
+
+        // Cập nhật owner
+        group.owner = userId;
+        await group.save();
+
+        // Thông báo chuyển owner thành công
+        return res.json({ success: true, message: 'Chuyển quyền chủ nhóm thành công.', newOwnerId: userId });
+    } catch (error) {
+        console.error("Lỗi ở transferOwner:", error);
+        res.status(500).json({ success: false, message: "Lỗi server trong transferOwner." });
     }
 };

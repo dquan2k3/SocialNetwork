@@ -181,3 +181,21 @@ export const apiGetGroupMedia = async (groupId: string) => {
         throw error;
     }
 };
+
+export const apiTransferGroupOwner = async (groupId: string, userId: string) => {
+    try {
+        const response = await instance.post("/group/transferGroupOwner", {
+            groupId,
+            userId,
+        });
+        return response.data;
+    } catch (error: any) {
+        if (error.response) {
+            console.error('Lỗi server:', error.response.data);
+        } else {
+            console.error('Lỗi khác:', error.message);
+        }
+        throw error;
+    }
+};
+

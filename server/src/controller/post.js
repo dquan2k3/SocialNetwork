@@ -10,7 +10,7 @@ import {
 import { bioModel } from '../model/bio';
 import { profileModel } from '../model/profile';
 import { Relationship } from '../model/relationship';
-import { notifyReact, notifyComment, deleteCommentNotification, notifyShare, deleteShareNotification } from './notification';
+import { notifyReact, notifyComment, deleteCommentNotification, notifyShare, deleteShareNotification, createGroupNotify } from './notification';
 
 const fs = require("fs");
 const cloudinary = require('../config/cloudinaryConfig');
@@ -797,8 +797,196 @@ export const getSinglePost = async (req, res) => {
     }
 };
 
-// Lấy tất cả bài viết (homeFeed, tất cả user)
+// Lấy tất cả bài viết (homeFeed, tất cả user) - giới hạn 10 post, trả cursorAt là createdAt của bản cũ nhất
 export const getAllPosts = async (req, res) => {
+    try {
+        // userId from req.user.id for myReact/hasShared/relationship etc
+        const userId = req.user?.id || null;
+
+        // Parse cursorAt (ISO date string) từ query (nếu có) để phân trang
+        let { cursorAt } = req.query;
+        let createdAtFilter = {};
+        if (cursorAt) {
+            // Chỉ lấy các post có createdAt < cursorAt (cũ hơn)
+            createdAtFilter = { createdAt: { $lt: new Date(cursorAt) } };
+        }
+
+        // Chỉ lấy post không có groupId (không phải post của group), phân trang, giới hạn 10 post
+        const posts = await postModel.find({
+            $and: [
+                {
+                    $or: [
+                        { groupId: { $exists: false } },
+                        { groupId: null }
+                    ]
+                },
+                createdAtFilter
+            ]
+        }).sort({ createdAt: -1 }).limit(10).lean();
+
+        const postIds = posts.map(p => p._id);
+
+        const files = await postFileModel.find({ post_id: { $in: postIds } }).sort({ order_index: 1 }).lean();
+        const postIdToFiles = {};
+        for (const f of files) {
+            const key = String(f.post_id);
+            if (!postIdToFiles[key]) postIdToFiles[key] = [];
+            postIdToFiles[key].push({ file_url: f.file_url, file_type: f.file_type, order_index: f.order_index });
+        }
+
+        const reactStats = await postReactModel.aggregate([
+            { $match: { post: { $in: postIds } } },
+            { $group: { _id: { post: "$post", react: "$react" }, count: { $sum: 1 } } }
+        ]);
+        const postIdToReactCounts = {};
+        for (const stat of reactStats) {
+            const postId = String(stat._id.post);
+            const reactName = stat._id.react;
+            if (!postIdToReactCounts[postId]) {
+                postIdToReactCounts[postId] = { like: 0, love: 0, fun: 0, sad: 0, angry: 0 };
+            }
+            postIdToReactCounts[postId][reactName] = stat.count;
+        }
+
+        let postIdToMyReact = {};
+        if (userId) {
+            const myReacts = await postReactModel.find({ post: { $in: postIds }, user: userId }).lean();
+            postIdToMyReact = {};
+            myReacts.forEach(r => {
+                postIdToMyReact[String(r.post)] = r.react;
+            });
+        }
+
+        const userIds = [...new Set(posts.map(p => String(p.user)))];
+
+        const bios = await bioModel.find(
+            { userid: { $in: userIds } },
+            'userid avatar cover avatarCroppedArea coverCroppedArea'
+        ).lean();
+        const userIdToBio = {};
+        for (const bio of bios) {
+            userIdToBio[String(bio.userid)] = {
+                avatar: bio.avatar,
+                cover: bio.cover,
+                avatarCroppedArea: bio.avatarCroppedArea,
+                coverCroppedArea: bio.coverCroppedArea
+            };
+        }
+
+        const profiles = await profileModel.find(
+            { user: { $in: userIds } },
+            'user username name'
+        ).lean();
+        const userIdToProfile = {};
+        for (const profile of profiles) {
+            userIdToProfile[String(profile.user)] = {
+                username: profile.username,
+                name: profile.name
+            };
+        }
+
+        let relationships = [];
+        if (userIds.length > 0) {
+            relationships = await Relationship.find({
+                $or: [
+                    { requester: { $in: userIds }, recipient: { $in: userIds } },
+                    { recipient: { $in: userIds }, requester: { $in: userIds } }
+                ]
+            }).lean();
+        }
+        const relMap = {};
+        for (const rel of relationships) {
+            relMap[`${String(rel.requester)}_${String(rel.recipient)}`] = rel;
+            relMap[`${String(rel.recipient)}_${String(rel.requester)}`] = rel;
+        }
+
+        const shareStats = await postShareModel.aggregate([
+            { $match: { post: { $in: postIds } } },
+            { $group: { _id: "$post", count: { $sum: 1 } } }
+        ]);
+        const postIdToShareCount = {};
+        for (const stat of shareStats) {
+            postIdToShareCount[String(stat._id)] = stat.count;
+        }
+
+        let hasShareMap = {};
+        if (userId) {
+            const userShares = await postShareModel.find({ post: { $in: postIds }, user: userId }).lean();
+            userShares.forEach(s => {
+                hasShareMap[String(s.post)] = true;
+            });
+        }
+
+        const commentCountArr = await postCommentModel.aggregate([
+            { $match: { post: { $in: postIds } } },
+            { $group: { _id: "$post", count: { $sum: 1 } } }
+        ]);
+        const postIdToCommentCount = {};
+        for (const stat of commentCountArr) {
+            postIdToCommentCount[String(stat._id)] = stat.count;
+        }
+
+        const result = posts.map(p => {
+            let relationship = null;
+            if (userId) {
+                if (relMap[`${String(userId)}_${String(p.user)}`]) {
+                    relationship = relMap[`${String(userId)}_${String(p.user)}`];
+                } else if (relMap[`${String(p.user)}_${String(userId)}`]) {
+                    relationship = relMap[`${String(p.user)}_${String(userId)}`];
+                }
+            }
+            const reactCounts = postIdToReactCounts[String(p._id)] || { like: 0, love: 0, fun: 0, sad: 0, angry: 0 };
+            const myReact = userId ? (postIdToMyReact[String(p._id)] || null) : null;
+            const hasShared = !!hasShareMap[String(p._id)];
+            const shareCount = postIdToShareCount[String(p._id)] || 0;
+            const commentCount = postIdToCommentCount[String(p._id)] || 0;
+
+            return {
+                _id: p._id,
+                user: p.user,
+                text: p.text,
+                privacy: p.privacy,
+                createdAt: p.createdAt,
+                updatedAt: p.updatedAt,
+                files: postIdToFiles[String(p._id)] || [],
+                reactCounts,
+                myReact,
+                bioUser: userIdToBio[String(p.user)] || null,
+                profileUser: userIdToProfile[String(p.user)] || null,
+                relationship: relationship
+                    ? {
+                        _id: relationship._id,
+                        requester: relationship.requester,
+                        recipient: relationship.recipient,
+                        status: relationship.status
+                    }
+                    : null,
+                hasShared,
+                shareCount,
+                commentCount
+            };
+        });
+
+        // Tìm bản cũ nhất để trả cursorAt (createdAt của post cuối cùng)
+        let cursorAtResult = null;
+        if (posts.length > 0) {
+            cursorAtResult = posts[posts.length - 1].createdAt;
+        }
+
+        return res.status(200).json({
+            success: true,
+            posts: result,
+            cursorAt: cursorAtResult
+        });
+    } catch (error) {
+        console.log(error);
+        res.status(500).json({ success: false, message: error && error.message ? error.message : String(error) });
+    }
+};
+
+
+// Lấy tất cả bài viết (homeFeed, tất cả user)
+export const getAllPostsBACKUP = async (req, res) => {
     try {
         // userId from req.user.id for myReact/hasShared/relationship etc
         const userId = req.user?.id || null;

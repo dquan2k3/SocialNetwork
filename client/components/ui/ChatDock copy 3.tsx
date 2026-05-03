@@ -11,19 +11,21 @@ import {
   loadMessage,
   apiGetGroupUser,
   apiDisbandGroupConversation,
-  apiLeaveGroupConversation
+  apiLeaveGroupConversation,
+  apiSelfChat,
+  apiGetSelfChat,
+  apiSummaryGroupConversation,
 } from "@/api/conversation.api";
 import { getCloudinaryImageLink } from "@/helper/croppedImageHelper";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faFlag, faCrown } from "@fortawesome/free-solid-svg-icons";
+import { faFlag, faCrown, faVideo, faRobot, faAlignLeft, faTimes } from "@fortawesome/free-solid-svg-icons";
 import { useRouter } from "next/navigation";
 import { apiReportMessage } from "@/api/report.api";
-import { toast } from "react-toastify";
+import { toast, ToastContainer, Id as ToastId, ToastOptions } from "react-toastify";
 import { getErrorMessage } from "@/helper/getErrorMessage";
 import { useMessagePriority } from "@/context/messagePriority/useMessagePriority";
 import { addConversation } from "@/store/slices/cacheConversationSlice";
 
-// Base toast style, cho phép người dùng tự ý chỉnh sửa
 export const toastBaseStyle: React.CSSProperties = {
   background: "#fff",
   color: "#222a33",
@@ -37,7 +39,7 @@ type MessageToastProps = {
   message: string;
   avatar?: string;
   avatarCroppedArea?: any;
-  onClick?: () => void; // For clickable functionality
+  onClick?: () => void;
 };
 
 function MessageToast({ name, message, avatar, avatarCroppedArea, onClick }: MessageToastProps) {
@@ -114,13 +116,15 @@ function MessageToast({ name, message, avatar, avatarCroppedArea, onClick }: Mes
         )}
       </div>
       <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{
-          fontWeight: 600,
-          color: "#111",
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-        }}>
+        <div
+          style={{
+            fontWeight: 600,
+            color: "#111",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
           {name}
         </div>
         <div
@@ -175,6 +179,9 @@ interface ChatMessage {
   conversationId?: string | number;
   conversationTitle?: string;
   conversationAvatarUrl?: string;
+  selfType?: "self" | "bot";
+  attachments?: any[];
+  readBy?: any[];
 }
 
 interface ChatConversation {
@@ -182,8 +189,8 @@ interface ChatConversation {
   title: string;
   avatarUrl?: string;
   conversationId?: string | number;
-  type?: "group" | "private";
-  owner?: string; // <<< ADD owner here for group
+  type?: "group" | "private" | "self";
+  owner?: string;
 }
 
 interface ChatDockProps {
@@ -206,7 +213,7 @@ type OpenChatOpts = {
   conversationId?: string | number;
   conversationTitle?: string;
   avatarUrl?: string;
-  type?: "group" | "private";
+  type?: "group" | "private" | "self";
 };
 
 type GroupUsersMap = Record<
@@ -220,7 +227,7 @@ type GroupUsersMap = Record<
   }>
 >;
 
-type GroupOwnerMap = Record<string | number, string | undefined>; // convId -> ownerId
+type GroupOwnerMap = Record<string | number, string | undefined>;
 
 type LoadingState = Record<string | number, boolean>;
 
@@ -235,6 +242,101 @@ interface CacheConversationsState {
   order: string[];
 }
 
+// ===== AI SUMMARY POPUP LOGIC =====
+
+async function fakeFetchGroupSummary(conversationId: string | number): Promise<string> {
+  const res = await apiSummaryGroupConversation(conversationId);
+  return res.botText;
+}
+
+const GroupSummaryPopover: React.FC<{
+  open: boolean;
+  summary: string;
+  onClose: () => void;
+}> = ({ open, summary, onClose }) => {
+  if (!open) return null;
+  return (
+    <div
+      style={{
+        position: "absolute",
+        zIndex: 10999,
+        left: "4%",
+        top: 24,
+        transform: "translateX(-85%)",
+        width: 300,
+        minWidth: 290,
+        maxWidth: 400,
+        minHeight: 90,
+        maxHeight: 260,
+        background: "#23282c",
+        color: "#fff",
+        borderRadius: 13,
+        border: "1.5px solid #2d2f36",
+        boxShadow: "0px 4.4px 18px 0 rgba(0,0,0,0.21)",
+        padding: "0 0 20px 0",
+        fontSize: 14.5,
+        fontWeight: 400,
+        overflowX: "hidden",
+        overflowY: "auto",
+        wordBreak: "break-word",
+        marginTop: 0,
+        textAlign: "left",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "10px",
+          borderBottom: "1px solid #2d2f36",
+        }}
+      >
+        <span style={{ fontSize: 16, fontWeight: 700 }}>Tóm tắt đoạn chat</span>
+        <button
+          onClick={onClose}
+          style={{
+            width: 38,
+            height: 38,
+            background: "rgba(52,52,53,0.60)",
+            color: "#fff",
+            border: "none",
+            borderRadius: "50%",
+            fontSize: 22,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            transition: "background .15s",
+            marginLeft: 7,
+          }}
+          title="Đóng"
+          onMouseEnter={e => ((e.currentTarget as HTMLElement).style.background = "#35363c")}
+          onMouseLeave={e => ((e.currentTarget as HTMLElement).style.background = "rgba(52,52,53,0.60)")}
+        >
+          <FontAwesomeIcon icon={faTimes} />
+        </button>
+      </div>
+      <div style={{
+        padding: "18px 22px 0 22px",
+        whiteSpace: "pre-line",
+        maxHeight: 170,
+        overflowY: "auto"
+      }}>
+        <span>{summary}</span>
+      </div>
+    </div>
+  );
+}
+
+// ===== END AI SUMMARY POPUP LOGIC =====
+
+// --- BEGIN: ToastId Map for Group Toasts for disband removal ---
+const groupConversationToastIdMap: Record<string, ToastId[]> = {};
+const PRIVATE_CONV_PREFIX = "private-";
+const GROUP_CONV_PREFIX = "group-";
+// --- END ---
+
 const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
   conversations: initialConversations,
   onSendMessage,
@@ -244,11 +346,13 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
   const user = useSelector((state: any) => state.user);
   const userId: string = user?.userId || "";
   const name: string = user?.profile?.name || "";
+  const myAvatar: string = user?.profile?.avatar || "";
 
   const {
     sendPrivateMessage,
     sendRoomMessage,
     listenMessages,
+    listenDisbandGroup,
   } = useChatSocket(userId, name);
 
   const { priority, groupPriority } = useMessagePriority();
@@ -263,17 +367,47 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
       initialConversations.slice(0, MAX_OPEN_TABS).map((c) => c.id);
     return [...ids];
   });
-  const [minimizedIds, setMinimizedIds] = useState<Array<ChatConversation["id"]>>([]);
   const [drafts, setDrafts] = useState<Record<string | number, string>>({});
   const [dynamicConversations, setDynamicConversations] = useState<ChatConversation[]>([]);
-  const [minimizedUnread, setMinimizedUnread] = useState<Record<string | number, number>>({});
   const [peerInfo, setPeerInfo] = useState<Record<string, PeerInfo>>({});
   const [tabConversationIds, setTabConversationIds] = useState<Record<string | number, string | number>>({});
-  const [tabTypes, setTabTypes] = useState<Record<string | number, "group" | "private" | undefined>>({});
+  const [tabTypes, setTabTypes] = useState<Record<string | number, "group" | "private" | "self" | undefined>>({});
   const [groupUsersMap, setGroupUsersMap] = useState<GroupUsersMap>({});
   const [groupOwnerMap, setGroupOwnerMap] = useState<GroupOwnerMap>({});
   const [tabLoading, setTabLoading] = useState<LoadingState>({});
   const [groupInfoDialog, setGroupInfoDialog] = useState<{ open: boolean, users: Array<any>, conv: ChatConversation | null, ownerId?: string }>({ open: false, users: [], conv: null });
+
+  // --- AI SUMMARY POPUP states ---
+  const [groupSummaryPopovers, setGroupSummaryPopovers] = useState<{
+    [k: string]: {
+      open: boolean;
+      isLoading: boolean;
+      summary: string;
+    }
+  }>({});
+
+  // --- Function to handle open/close/trigger summary ---
+  const handleOpenGroupSummary = (conv: { id: string | number, conversationId?: string | number }) => {
+    const cid = conv.conversationId ?? conv.id;
+    if (groupSummaryPopovers[cid]?.open) return; // Prevent double open
+    setGroupSummaryPopovers(prev => ({
+      ...prev,
+      [cid]: { ...(prev[cid] || {}), open: true, isLoading: true, summary: "" }
+    }));
+    // Fake API fetch summary
+    fakeFetchGroupSummary(cid).then(summary => {
+      setGroupSummaryPopovers(prev => ({
+        ...prev,
+        [cid]: { open: true, isLoading: false, summary }
+      }));
+    });
+  };
+  const handleCloseGroupSummary = (cid: string | number) => {
+    setGroupSummaryPopovers(prev => ({
+      ...prev,
+      [cid]: { ...(prev[cid] || {}), open: false }
+    }));
+  };
 
   // ---------- BEGIN: State cho dialog xác nhận giải tán nhóm ----------
   const [showDisbandGroupDialog, setShowDisbandGroupDialog] = useState<{
@@ -297,7 +431,6 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
   const scrollPendingInitTabRef = useRef<Set<string | number>>(new Set());
   const initialPromiseRef = useRef<Record<string | number, Promise<void> | null>>({});
 
-  // Group cache for group conversations: key = conversationId, value = {conversationId, name, avatar, owner}
   const [groupCache, setGroupCache] = useState<Record<string, { conversationId: string, name: string, avatar?: string, owner?: string }>>({});
 
   // Handle report logic
@@ -329,8 +462,7 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
         }
         if (res && res.success) {
           toast.success(res.message);
-        }
-        else {
+        } else {
           toast.warn(res.message);
         }
       } catch (err) {
@@ -344,14 +476,105 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
     setReportDialog({ open: false, conv: null });
   };
 
+  // --- CHỈ THAY ĐỔI onTabInitial để gọi apiGetSelfChat khi mở tab self ---
+  // PATCH lại để mapping đúng message self/bot cho self tab
   const onTabInitial = async (
     tabId: string | number,
-    opts?: { conversationId?: string | number, type?: "group" | "private" }
+    opts?: { conversationId?: string | number; type?: "group" | "private" | "self" }
   ) => {
+    const isSelfTab =
+      tabId === "self" ||
+      opts?.type === "self" ||
+      tabTypes[tabId] === "self" ||
+      (() => {
+        if (!dynamicConversations.some(dc => dc.id === "self" || dc.type === "self")) return false;
+        if (tabId === "self") return true;
+        const dc = dynamicConversations.find(dc => dc.id === tabId);
+        return dc && dc.type === "self";
+      })();
+
+    if (isSelfTab) {
+      setTabTypes((prev) => {
+        const next: Record<string | number, "group" | "private" | "self" | undefined> = { ...prev };
+        next[tabId] = "self";
+        return next;
+      });
+      setTabLoading((prev) => {
+        const next: typeof prev = { ...prev };
+        next[tabId] = true;
+        return next;
+      });
+
+      try {
+        const result = await apiGetSelfChat();
+        // result.messages = [{ createdAt, text, type: 'self' | 'bot', userId, _id }]
+        if (result && Array.isArray(result.messages)) {
+          setPrivateMessages((prev) => ({
+            ...prev,
+            [tabId]: result.messages.map((msg: any) => {
+              // Tin nhắn type = self là bản thân, type = bot là người khác gửi cho mình
+              // Phép ánh xạ sang ChatMessage cũ
+              return {
+                id: msg._id ?? msg.id,
+                senderId: msg.userId,
+                senderName: msg.type === "self" ? name : "Người khác",
+                message: msg.text,
+                createdAt: msg.createdAt,
+                isOutgoing: msg.type === "self",
+                conversationId: undefined,
+                selfType: msg.type
+              }
+            }),
+          }));
+        } else {
+          setPrivateMessages((prev) => ({
+            ...prev,
+            [tabId]: [],
+          }));
+        }
+      } catch (err) {
+        setPrivateMessages((prev) => ({
+          ...prev,
+          [tabId]: [],
+        }));
+      } finally {
+        setTabLoading((prev) => {
+          const next: typeof prev = { ...prev };
+          next[tabId] = false;
+          return next;
+        });
+      }
+
+      return;
+    }
+
     if (initialPromiseRef.current[tabId]) {
       return initialPromiseRef.current[tabId];
     }
-    const initialConv = initialConversations.find(c => c.id === tabId);
+
+    let initialConv = initialConversations.find((c) => c.id === tabId);
+    if (!initialConv) {
+      if (opts?.type === "private") {
+        initialConv = {
+          id: tabId,
+          conversationId: "",
+          type: "private",
+          title: "",
+          avatarUrl: "",
+        };
+      }
+      else if (opts?.type === "group") {
+        initialConv = {
+          id: tabId,
+          conversationId: tabId,
+          type: "group",
+          title: "",
+          avatarUrl: "",
+        };
+      }
+
+    }
+
     setTabLoading((prev) => ({ ...prev, [tabId]: true }));
 
     let promise: Promise<void>;
@@ -359,7 +582,10 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
       promise = (async () => {
         try {
           scrollPendingInitTabRef.current.add(tabId);
-          const result = await getConversationDetail({ userId: tabId as string, conversationId: initialConv.conversationId as string });
+          const result = await getConversationDetail({
+            userId: tabId as string,
+            conversationId: initialConv.conversationId as string,
+          });
           if (result && Array.isArray(result.messages) && result.messages.length > 0) {
             setPrivateMessages((prev) => ({
               ...prev,
@@ -380,11 +606,11 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
             // truyền owner vào groupOwnerMap / groupCache nếu là group
             if (initialConv.type === "group") {
               if (result.owner) {
-                setGroupOwnerMap(prev => ({
+                setGroupOwnerMap((prev) => ({
                   ...prev,
                   [tabId]: result.owner,
                 }));
-                setGroupCache(prev => ({
+                setGroupCache((prev) => ({
                   ...prev,
                   [String(initialConv.conversationId)]: {
                     ...(prev[String(initialConv.conversationId)] ?? {}),
@@ -392,7 +618,7 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
                     name: result.name || initialConv.title,
                     avatar: result.avatar || initialConv.avatarUrl,
                     owner: result.owner,
-                  }
+                  },
                 }));
               }
             }
@@ -433,11 +659,11 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
             }));
             // truyền owner vào cache nếu là group
             if ((opts?.type ?? initialConv?.type) === "group" && result.owner) {
-              setGroupOwnerMap(prev => ({
+              setGroupOwnerMap((prev) => ({
                 ...prev,
                 [tabId]: result.owner,
               }));
-              setGroupCache(prev => ({
+              setGroupCache((prev) => ({
                 ...prev,
                 [String(result.conversationId ?? tabId)]: {
                   ...(prev[String(result.conversationId ?? tabId)] ?? {}),
@@ -445,7 +671,7 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
                   name: result.name || initialConv?.title,
                   avatar: result.avatar || initialConv?.avatarUrl,
                   owner: result.owner,
-                }
+                },
               }));
             }
           }
@@ -462,22 +688,33 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
     });
     return promise;
   };
+  // ------ END PATCH, còn lại giữ nguyên file ------
 
   // ============ PRIO (PRIVATE LOW + GROUP LOW) - ENABLE CACHE FOR GROUP ============
   useEffect(() => {
-    // Helper: open the chat tab with correct preference (private/group, convId) from toast click
-    function openChatTabToast(id: string | number, type?: "group" | "private", conversationId?: string | number) {
-      // Build OpenChatOpts from toast if possible
+    // (REWRITE) track toast ids for group conversation to support dismiss by conversation id
+    function openChatTabToast(id: string | number, type?: "group" | "private" | "self", conversationId?: string | number) {
+      // INSERT_YOUR_CODE
+      // Attach toastId for toast close by group on disband
       let opts: OpenChatOpts = {};
       if (typeof type !== "undefined") opts.type = type;
       if (typeof conversationId !== "undefined") opts.conversationId = conversationId;
       handleOpenConversation(id, opts);
     }
-    // Remember a ref for the helper
     const openTabOnToastClick = openChatTabToast;
+
+    const registerToastId = (conversationId: string | number, toastId: ToastId, type: "group" | "private" = "group") => {
+      if (type === "group") {
+        const cid = String(conversationId);
+        if (!groupConversationToastIdMap[cid]) groupConversationToastIdMap[cid] = [];
+        groupConversationToastIdMap[cid].push(toastId);
+      }
+      // If you want, you can handle tracking toastId for private (for future extension)
+    };
 
     const off = listenMessages({
       onRoomMessage: async (msg: any) => {
+        // ... original unchanged group logic ...
         if (!msg || !msg.roomId) return;
         const peerId = msg.roomId;
         let groupInfo: { conversationId: string, name: string, avatar?: string, owner?: string } | undefined = undefined;
@@ -487,14 +724,14 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
           try {
             const incomeGroupRes = await apiGetIncomeGroup(msg.roomId);
             if (incomeGroupRes && incomeGroupRes.conversationId) {
-              setGroupCache(prev => ({
+              setGroupCache((prev) => ({
                 ...prev,
                 [incomeGroupRes.conversationId]: {
                   conversationId: incomeGroupRes.conversationId,
                   name: incomeGroupRes.name || "",
                   avatar: incomeGroupRes.avatar || "",
                   owner: incomeGroupRes.owner || undefined,
-                }
+                },
               }));
               groupCacheState = {
                 ...groupCacheState,
@@ -503,11 +740,10 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
                   name: incomeGroupRes.name || "",
                   avatar: incomeGroupRes.avatar || "",
                   owner: incomeGroupRes.owner || undefined,
-                }
+                },
               };
-              // lưu lại owner mapping cho conv
               if (incomeGroupRes.owner) {
-                setGroupOwnerMap(prev => ({
+                setGroupOwnerMap((prev) => ({
                   ...prev,
                   [peerId]: incomeGroupRes.owner,
                 }));
@@ -522,11 +758,7 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
 
         let groupConvId = msg.conversationId || msg.roomId || "";
 
-        if (
-          groupConvId &&
-          groupCache &&
-          groupCache[groupConvId]
-        ) {
+        if (groupConvId && groupCache && groupCache[groupConvId]) {
           groupInfo = groupCache[groupConvId];
         }
 
@@ -541,9 +773,8 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
                 owner: groupApiResult.owner,
               };
               groupConvId = groupApiResult.conversationId;
-              // lưu lại owner
               if (groupApiResult.owner) {
-                setGroupOwnerMap(prev => ({
+                setGroupOwnerMap((prev) => ({
                   ...prev,
                   [peerId]: groupApiResult.owner,
                 }));
@@ -555,7 +786,7 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
         }
 
         if (groupInfo?.owner) {
-          setGroupOwnerMap(prev => ({
+          setGroupOwnerMap((prev) => ({
             ...prev,
             [peerId]: groupInfo!.owner,
           }));
@@ -609,50 +840,6 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
           );
         }
 
-        if (minimizedIds.includes(peerId)) {
-          setMinimizedUnread((prev) => ({
-            ...prev,
-            [peerId]: (prev[peerId] || 0) + 1,
-          }));
-          setPrivateMessages((prev) => ({
-            ...prev,
-            [peerId]: [
-              ...(prev[peerId] || []),
-              {
-                ...msg,
-                isOutgoing: msg.senderId === userId,
-              },
-            ],
-          }));
-          return;
-        }
-
-        const groupPri = groupPriority || "none";
-        const isOpen = openIds.includes(peerId);
-
-        if (isOpen) {
-          setPrivateMessages((prev) => ({
-            ...prev,
-            [peerId]: [
-              ...(prev[peerId] || []),
-              {
-                ...msg,
-                isOutgoing: msg.senderId === userId,
-              },
-            ],
-          }));
-          setMinimizedIds((prev) => prev.filter((x) => x !== peerId));
-          setMinimizedUnread((prev) => {
-            if (prev[peerId]) {
-              const newState = { ...prev };
-              delete newState[peerId];
-              return newState;
-            }
-            return prev;
-          });
-          return;
-        }
-
         setPrivateMessages((prev) => ({
           ...prev,
           [peerId]: [
@@ -663,6 +850,13 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
             },
           ],
         }));
+
+        const groupPri = groupPriority || "none";
+        const isOpen = openIds.includes(peerId);
+
+        if (isOpen) {
+          return;
+        }
 
         if (groupPri === "high") {
           setDynamicConversations((prevConvs) => {
@@ -709,55 +903,36 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
             }
             return next;
           });
-          setMinimizedIds((prev) => prev.filter((x) => x !== peerId));
-          setMinimizedUnread((prev) => {
-            if (prev[peerId]) {
-              const newState = { ...prev };
-              delete newState[peerId];
-              return newState;
-            }
-            return prev;
-          });
         } else if (groupPri === "low") {
-          // === REWRITE TOAST HERE TO SUPPORT CLICK-TO-OPEN TAB ===
           const senderDisplay = msg.senderName || "Người dùng";
-          toast(
+          // Use a custom toastId (must be unique), e.g., "group-<cid>-<Date.now()>"
+          const convIdString = String(groupConvId || peerId || "");
+          const toastId = `group-${convIdString}-${Date.now()}`;
+          const tId = toast(
             <MessageToast
               name={groupTitle}
               message={`${senderDisplay}\n: ${msg.message}`}
               avatar={groupAvatar}
               onClick={() =>
-                openTabOnToastClick(
-                  peerId,
-                  "group",
-                  groupConvId
-                )
+                openTabOnToastClick(peerId, "group", groupConvId)
               }
             />,
             {
+              toastId,
               containerId: "chat",
               style: toastBaseStyle,
-              onClick: () =>
-                openTabOnToastClick(
-                  peerId,
-                  "group",
-                  groupConvId
-                ),
+              onClick: () => openTabOnToastClick(peerId, "group", groupConvId),
               closeOnClick: true,
               draggable: false,
               pauseOnHover: false,
             }
           );
+          registerToastId(convIdString, toastId, "group");
         }
-        // none: ko alert
       },
 
-      // ... onPrivateMessage same as before ...
-      // BELOW REMAINS UNCHANGED
-      // (cut for brevity; ensure you include the unchanged logic as in your code)
-      // (If copying, keep original - omitted here for clarity)
-      // (No changes to onPrivateMessage for this instruction)
       onPrivateMessage: async (msg: any) => {
+        // No self message onPrivateMessage
         let peerId = msg.senderId;
         if (!peerId) return;
 
@@ -825,160 +1000,123 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
           }
         };
 
+        // ==== PATCH: Prevent private toast if the tab is already open (as group does) ====
         if (pri === "low" && !isGroup) {
           let cachedConv: Conversation | undefined;
           const conversationIdStr = conversationIdFromMsg ? String(conversationIdFromMsg) : undefined;
 
-          if (conversationIdStr && cacheConversations && cacheConversations[conversationIdStr]) {
-            cachedConv = cacheConversations[conversationIdStr];
-          }
-          if (cachedConv) {
-            fetchedName = cachedConv.name;
-            fetchedAvatar = cachedConv.avatar || "";
-            fetchedAvatarCroppedArea = cachedConv.avatarCroppedArea;
-
-            setTabConversationIds((prev) => {
-              const next: Record<string | number, string | number> = { ...prev };
-              if (conversationIdStr !== undefined) {
-                next[peerId] = conversationIdStr;
-              }
-              return next;
-            });
-            setPeerInfo((prev) => ({
-              ...prev,
-              [peerId]: {
-                name: fetchedName,
-                avatar: fetchedAvatar,
-                avatarCroppedArea: fetchedAvatarCroppedArea,
-              },
-            }));
-
-            if (pri === "low") {
-              toast(
-                <MessageToast
-                  name={cachedConv.name}
-                  message={msg.message}
-                  avatar={cachedConv.avatar}
-                  avatarCroppedArea={cachedConv.avatarCroppedArea}
-                  onClick={() =>
-                    openTabOnToastClick(
-                      peerId,
-                      "private",
-                      conversationIdStr
-                    )
-                  }
-                />,
-                {
-                  containerId: "chat",
-                  style: toastBaseStyle,
-                  onClick: () =>
-                    openTabOnToastClick(
-                      peerId,
-                      "private",
-                      conversationIdStr
-                    ),
-                  closeOnClick: true,
-                  draggable: false,
-                  pauseOnHover: false,
-                }
-              );
-            }
+          // Don't show toast if private chat is already open
+          if (openIds.includes(peerId)) {
+            // Still update message and state, but don't show toast
+            // (the return is after the setPrivateMessages so out of this area)
           } else {
-            try {
-              const apiRes = await fetchAndSetIncomeUser();
-              if (apiRes && apiRes.conversationId) {
-                dispatch(
-                  addConversation({
-                    conversationId: String(apiRes.conversationId),
-                    name: apiRes.name || "",
-                    avatar: apiRes.avatar,
-                    avatarCroppedArea: apiRes.avatarCroppedArea,
-                  })
-                );
-              }
+            if (conversationIdStr && cacheConversations && cacheConversations[conversationIdStr]) {
+              cachedConv = cacheConversations[conversationIdStr];
+            }
+            if (cachedConv) {
+              fetchedName = cachedConv.name;
+              fetchedAvatar = cachedConv.avatar || "";
+              fetchedAvatarCroppedArea = cachedConv.avatarCroppedArea;
 
-              if (pri === "low" && apiRes) {
+              setTabConversationIds((prev) => {
+                const next: Record<string | number, string | number> = { ...prev };
+                if (conversationIdStr !== undefined) {
+                  next[peerId] = conversationIdStr;
+                }
+                return next;
+              });
+              setPeerInfo((prev) => ({
+                ...prev,
+                [peerId]: {
+                  name: fetchedName,
+                  avatar: fetchedAvatar,
+                  avatarCroppedArea: fetchedAvatarCroppedArea,
+                },
+              }));
+
+              if (pri === "low") {
                 toast(
                   <MessageToast
-                    name={apiRes.name}
+                    name={cachedConv.name}
                     message={msg.message}
-                    avatar={apiRes.avatar}
-                    avatarCroppedArea={apiRes.avatarCroppedArea}
+                    avatar={cachedConv.avatar}
+                    avatarCroppedArea={cachedConv.avatarCroppedArea}
                     onClick={() =>
-                      openTabOnToastClick(
-                        peerId,
-                        "private",
-                        apiRes.conversationId
-                      )
+                      openTabOnToastClick(peerId, "private", conversationIdStr)
                     }
                   />,
                   {
                     containerId: "chat",
                     style: toastBaseStyle,
-                    onClick: () =>
-                      openTabOnToastClick(
-                        peerId,
-                        "private",
-                        apiRes.conversationId
-                      ),
+                    onClick: () => openTabOnToastClick(peerId, "private", conversationIdStr),
                     closeOnClick: true,
                     draggable: false,
                     pauseOnHover: false,
                   }
                 );
+                // Optionally, you can also track private id toast if needed, so that leaveGroup/other can dismiss
               }
-            } catch (err) {
-              // Ignore
+            } else {
+              try {
+                const apiRes = await fetchAndSetIncomeUser();
+                if (apiRes && apiRes.conversationId) {
+                  dispatch(
+                    addConversation({
+                      conversationId: String(apiRes.conversationId),
+                      name: apiRes.name || "",
+                      avatar: apiRes.avatar,
+                      avatarCroppedArea: apiRes.avatarCroppedArea,
+                    })
+                  );
+                }
+
+                if (pri === "low" && apiRes) {
+                  toast(
+                    <MessageToast
+                      name={apiRes.name}
+                      message={msg.message}
+                      avatar={apiRes.avatar}
+                      avatarCroppedArea={apiRes.avatarCroppedArea}
+                      onClick={() =>
+                        openTabOnToastClick(peerId, "private", apiRes.conversationId)
+                      }
+                    />,
+                    {
+                      containerId: "chat",
+                      style: toastBaseStyle,
+                      onClick: () =>
+                        openTabOnToastClick(peerId, "private", apiRes.conversationId),
+                      closeOnClick: true,
+                      draggable: false,
+                      pauseOnHover: false,
+                    }
+                  );
+                  // Optionally, you can also track private id toast if needed for future
+                }
+              } catch (err) {
+                // Ignore
+              }
             }
           }
         } else if (!hasPeerInfo && (pri === "high" || (pri === "low" && isGroup))) {
           await fetchAndSetIncomeUser();
         }
 
-        if (minimizedIds.includes(peerId)) {
-          setMinimizedUnread((prev) => ({
+        setPrivateMessages((prev) => {
+          const updated = {
             ...prev,
-            [peerId]: (prev[peerId] || 0) + 1,
-          }));
-          setPrivateMessages((prev) => {
-            const updated = {
-              ...prev,
-              [peerId]: [
-                ...(prev[peerId] || []),
-                {
-                  ...msg,
-                  isOutgoing: msg.senderId === userId,
-                },
-              ],
-            };
-            return updated;
-          });
-          return;
-        }
+            [peerId]: [
+              ...(prev[peerId] || []),
+              {
+                ...msg,
+                isOutgoing: msg.senderId === userId,
+              },
+            ],
+          };
+          return updated;
+        });
 
         if (openIds.includes(peerId)) {
-          setPrivateMessages((prev) => {
-            const updated = {
-              ...prev,
-              [peerId]: [
-                ...(prev[peerId] || []),
-                {
-                  ...msg,
-                  isOutgoing: msg.senderId === userId,
-                },
-              ],
-            };
-            return updated;
-          });
-          setMinimizedIds((prev) => prev.filter((x) => x !== peerId));
-          setMinimizedUnread((prev) => {
-            if (prev[peerId]) {
-              const newState = { ...prev };
-              delete newState[peerId];
-              return newState;
-            }
-            return prev;
-          });
           return;
         }
 
@@ -998,20 +1136,6 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
               type: msg.type,
             },
           ];
-        });
-
-        setPrivateMessages((prev) => {
-          const updated = {
-            ...prev,
-            [peerId]: [
-              ...(prev[peerId] || []),
-              {
-                ...msg,
-                isOutgoing: msg.senderId === userId,
-              },
-            ],
-          };
-          return updated;
         });
 
         if (pri === "high") {
@@ -1038,18 +1162,13 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
             }
             return next;
           });
-          setMinimizedIds((prev) => prev.filter((x) => x !== peerId));
-          setMinimizedUnread((prev) => {
-            if (prev[peerId]) {
-              const newState = { ...prev };
-              delete newState[peerId];
-              return newState;
-            }
-            return prev;
-          });
         }
       },
+
+      // Add custom 'onSelfMessage' handler if needed in your socket lib!
+      // But for now, not handled.
     });
+
     return () => off?.();
     // eslint-disable-next-line
   }, [
@@ -1057,15 +1176,52 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
     name,
     initialConversations,
     openIds,
-    minimizedIds,
     peerInfo,
     priority,
     groupPriority,
     dynamicConversations,
     cacheConversations,
     groupCache,
-    dispatch
+    dispatch,
   ]);
+  // LẮNG NGHE GIẢI TÁN NHÓM, TỰ ĐỘNG TẮT TAB CHAT NHÓM VÀ ĐÓNG TOÀN BỘ TOAST "LOW" của conversation này nếu có
+  useEffect(() => {
+    // Listen for group disband event and close tab if group is open
+    const offDisband = listenDisbandGroup((data: any) => {
+      const leaveGroupId = String(data?.conversationId || data?.groupId || "");
+      if (!leaveGroupId) return;
+      // Tìm xem có tab nào group đúng với conversationId/groupId không, tắt nếu có
+      setOpenIds((prev) => prev.filter((id) => {
+        const cid = tabConversationIds[id] ?? id;
+        return String(cid) !== leaveGroupId;
+      }));
+
+      // ĐÓNG các toast đang hiển thị cho group đó (group LOW prio)
+      if (groupConversationToastIdMap[leaveGroupId]) {
+        groupConversationToastIdMap[leaveGroupId].forEach((toastId) => {
+          toast.dismiss(toastId);
+        });
+        groupConversationToastIdMap[leaveGroupId] = [];
+      }
+
+      // ---- ĐÓNG popup thành viên nhóm nếu đang xem nhóm đó ----
+      setGroupInfoDialog((state) => {
+        if (
+          state.open &&
+          state.conv &&
+          (String(state.conv.conversationId ?? state.conv.id) === leaveGroupId)
+        ) {
+          return { open: false, users: [], conv: null, ownerId: undefined };
+        }
+        return state;
+      });
+      // -------------------------------------------------------
+    });
+    return () => {
+      if (typeof offDisband === "function") offDisband();
+    };
+    // eslint-disable-next-line
+  }, [tabConversationIds]);
 
   useEffect(() => { }, [privateMessages]);
 
@@ -1083,15 +1239,11 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
             owner,
           };
         }
-        // For group: check groupCache as well, prefer over message props (for groupName/avatar change)
         if (dc.type === "group") {
           const groupConvId =
             (typeof dc.conversationId === "string" ? dc.conversationId : undefined) ||
             (typeof dc.id === "string" ? dc.id : undefined);
-          if (
-            groupConvId &&
-            groupCache[groupConvId]
-          ) {
+          if (groupConvId && groupCache[groupConvId]) {
             owner = groupCache[groupConvId].owner;
             return {
               ...dc,
@@ -1117,7 +1269,7 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
       avatarUrl?: string;
       messages: ChatMessage[];
       conversationId?: string | number;
-      type?: "group" | "private";
+      type?: "group" | "private" | "self";
       owner?: string;
     }> = [];
     const realConvs = openIds
@@ -1126,9 +1278,8 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
         if (!c) return undefined;
         const conversationId: string | number | undefined =
           tabConversationIds[id] ?? c.conversationId ?? undefined;
-        const type: "group" | "private" | undefined = tabTypes[id] ?? c.type;
+        const type: "group" | "private" | "self" | undefined = tabTypes[id] ?? c.type;
         let owner = c.owner;
-        // For group: prefer groupCache for name/avatar/owner
         let title = c.title;
         let avatarUrl = c.avatarUrl;
         if (type === "group" && conversationId && groupCache[String(conversationId)]) {
@@ -1154,59 +1305,92 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
         avatarUrl?: string;
         messages: ChatMessage[];
         conversationId?: string | number;
-        type?: "group" | "private";
+        type?: "group" | "private" | "self";
         owner?: string;
       }>;
     result.push(...realConvs);
     return result;
   }, [openIds, mergedConversations, privateMessages, tabConversationIds, tabTypes, groupCache]);
 
-  const minimizedConversations = useMemo(
-    () =>
-      minimizedIds
-        .map((id) => {
-          const c = mergedConversations.find((cv) => cv.id === id);
-          if (!c) return undefined;
-          const conversationId: string | number | undefined =
-            tabConversationIds[id] ?? c.conversationId ?? undefined;
-          const type: "group" | "private" | undefined = tabTypes[id] ?? c.type;
-
-          let title = c.title;
-          let avatarUrl = c.avatarUrl;
-          let owner = c.owner;
-          if (type === "group" && conversationId && groupCache[String(conversationId)]) {
-            title = groupCache[String(conversationId)].name;
-            avatarUrl = groupCache[String(conversationId)].avatar;
-            owner = groupCache[String(conversationId)].owner;
-          } else if (type === "group" && c.owner) {
-            owner = c.owner;
-          }
-          return {
-            ...c,
-            title,
-            avatarUrl,
-            messages: privateMessages[id] || [],
-            conversationId,
-            type,
-            owner,
-          };
-        })
-        .filter(Boolean) as Array<{
-          id: string | number;
-          title: string;
-          avatarUrl?: string;
-          messages: ChatMessage[];
-          conversationId?: string | number;
-          type?: "group" | "private";
-          owner?: string;
-        }>,
-    [minimizedIds, mergedConversations, privateMessages, tabConversationIds, tabTypes, groupCache]
-  );
 
   const handleOpenConversation = (
     id: ChatConversation["id"],
     opts?: OpenChatOpts
   ) => {
+    const nextType = opts?.type || tabTypes[id] || mergedConversations.find((c) => c.id === id)?.type;
+
+    // SPECIAL HANDLING FOR SELF TAB: always dynamicConversations!
+    if (nextType === "self") {
+      setDynamicConversations((prev) => {
+        if (prev.some((c) => c.id === "self" && c.type === "self")) return prev;
+        return [
+          ...prev,
+          {
+            id: "self",
+            conversationId: undefined,
+            title: name || "Tôi",
+            avatarUrl: myAvatar,
+            type: "self",
+          },
+        ];
+      });
+
+      setTabTypes((prev) => {
+        const next: Record<string | number, "group" | "private" | "self" | undefined> = { ...prev };
+        next[id] = "self";
+        return next;
+      });
+
+      setOpenIds((prev) => {
+        const ids = prev.filter((x) => x !== id);
+        let next = [...ids, id];
+        if (next.length > MAX_OPEN_TABS) {
+          const keepCount = MAX_OPEN_TABS;
+          next = next.slice(next.length - keepCount);
+        }
+        return next;
+      });
+      setTabLoading((prev) => ({ ...prev, [id]: false }));
+
+      // THAY ĐỔI: vẫn chạy `onTabInitial` cho self tab như thường
+      if (!tabOpenedRef.current[id]) {
+        tabOpenedRef.current[id] = true;
+        setTabLoading((prev) => ({ ...prev, [id]: true }));
+        onTabInitial(id, { ...opts, type: "self" })?.then(() => {
+          setTabLoading((prev) => ({ ...prev, [id]: false }));
+          setTimeout(() => {
+            const node = chatPanelsRef.current[id];
+            if (node) {
+              node.scrollTop = node.scrollHeight;
+            }
+          }, 0);
+        });
+      } else {
+        setTimeout(() => {
+          const node = chatPanelsRef.current[id];
+          if (node) {
+            node.scrollTop = node.scrollHeight;
+          }
+        },);
+      }
+      return;
+    }
+
+    // FIX logging: set groupConversation = opts.conversationId và log nó ra, còn lại giữ nguyên chức năng
+    if (nextType === "group") {
+      // Determine the correct conversationId
+      let groupConvId =
+        opts?.conversationId ??
+        tabConversationIds[id];
+
+      if (!groupConvId) {
+        const merged = mergedConversations.find((c) =>
+          c.id === id || c.conversationId === id || (opts?.conversationId && (c.conversationId === opts.conversationId || c.id === opts.conversationId))
+        );
+        groupConvId = merged?.conversationId ?? id;
+      }
+    }
+
     if (!tabOpenedRef.current[id]) {
       tabOpenedRef.current[id] = true;
       setOpenIds((prev) => {
@@ -1218,26 +1402,24 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
         }
         return next;
       });
-      setMinimizedIds((prev) => prev.filter((x) => x !== id));
-      setMinimizedUnread((prev) => {
-        if (prev[id]) {
-          const newState = { ...prev };
-          delete newState[id];
-          return newState;
-        }
-        return prev;
-      });
       setTabLoading((prev) => ({ ...prev, [id]: true }));
       onTabInitial(id, opts)?.then(async () => {
         tabOpenedRef.current[id] = true;
-        const conversationType: "group" | "private" | undefined =
+        const conversationType: "group" | "private" | "self" | undefined =
           tabTypes[id] ??
           mergedConversations.find((c) => c.id === id)?.type ??
           opts?.type;
-        const conversationId: string | number | undefined =
-          tabConversationIds[id] ??
-          mergedConversations.find((c) => c.id === id)?.conversationId ??
-          opts?.conversationId;
+
+        // For group, be sure to pass the correct conversation id as above
+        let conversationId: string | number | undefined =
+          tabConversationIds[id];
+        if (!conversationId) {
+          const merged = mergedConversations.find((c) =>
+            c.id === id || c.conversationId === id || (opts?.conversationId && (c.conversationId === opts.conversationId || c.id === opts.conversationId))
+          );
+          conversationId = merged?.conversationId ?? opts?.conversationId ?? id;
+        }
+
         if (conversationType === "group" && conversationId) {
           try {
             const groupUser = await apiGetGroupUser(conversationId.toString());
@@ -1245,11 +1427,10 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
               ...prev,
               [id]: Array.isArray(groupUser?.users) ? groupUser.users : [],
             }));
-            // truyền owner vào groupOwnerMap nếu groupUser.owner có trả về owner
             if (groupUser && groupUser.owner) {
               setGroupOwnerMap((prev) => ({
                 ...prev,
-                [id]: groupUser.owner
+                [id]: groupUser.owner,
               }));
             }
           } catch (err) { }
@@ -1260,7 +1441,7 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
           if (node) {
             node.scrollTop = node.scrollHeight;
           }
-        }, 0);
+        }, 1);
       });
       setTimeout(() => {
         const node = chatPanelsRef.current[id];
@@ -1273,15 +1454,6 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
     setOpenIds((prev) => {
       const filtered = prev.filter((x) => x !== id);
       return [...filtered, id];
-    });
-    setMinimizedIds((prev) => prev.filter((x) => x !== id));
-    setMinimizedUnread((prev) => {
-      if (prev[id]) {
-        const newState = { ...prev };
-        delete newState[id];
-        return newState;
-      }
-      return prev;
     });
     setTimeout(() => {
       const node = chatPanelsRef.current[id];
@@ -1302,46 +1474,14 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
     }
   }, [defaultOpenIds]);
 
-  const handleMinimize = (id: ChatConversation["id"]) => {
-    setOpenIds((prev) => prev.filter((x) => x !== id));
-    setMinimizedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
-  };
-
-  const handleCloseAll = () => {
-    setOpenIds([]);
-    setMinimizedIds([]);
-    setDrafts({});
-    setPrivateMessages({});
-    setDynamicConversations([]);
-    setMinimizedUnread({});
-    setPeerInfo({});
-    setTabConversationIds({});
-    setTabTypes({});
-    setGroupUsersMap({});
-    setTabLoading({});
-    setGroupCache({});
-    setGroupOwnerMap({});
-    tabOpenedRef.current = {};
-    chatPanelsRef.current = {};
-    scrollTriggerTabRef.current = new Set();
-    scrollPendingInitTabRef.current = new Set();
-    initialPromiseRef.current = {};
-  };
-
   const handleClose = (id: ChatConversation["id"]) => {
     setOpenIds((prev) => prev.filter((x) => x !== id));
-    setMinimizedIds((prev) => prev.filter((x) => x !== id));
     setDrafts((prev) => {
       const cp = { ...prev };
       delete cp[id];
       return cp;
     });
     setPrivateMessages((prev) => {
-      const cp = { ...prev };
-      delete cp[id];
-      return cp;
-    });
-    setMinimizedUnread((prev) => {
       const cp = { ...prev };
       delete cp[id];
       return cp;
@@ -1391,45 +1531,89 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
     delete initialPromiseRef.current[id];
   };
 
-  const handleChangeDraft = (
-    id: ChatConversation["id"],
-    value: string
-  ) => {
+  const handleChangeDraft = (id: ChatConversation["id"], value: string) => {
     setDrafts((prev) => ({ ...prev, [id]: value }));
   };
 
-  // CHỈ SỬA ĐOẠN DƯỚI ĐỂ ĐẢM BẢO LUÔN GỬI conversationId KHI sendPrivateMessage
+  // HANDLE SEND for self tab:
   const handleSend = async (id: ChatConversation["id"]) => {
     const text = (drafts[id] || "").trim();
     if (!text) return;
 
-    const conversationIdOfTab = tabConversationIds[id] ??
-      (mergedConversations.find((c) => c.id === id)?.conversationId);
-
-    const convType: "group" | "private" | undefined =
+    const convType: "group" | "private" | "self" | undefined =
       tabTypes[id] ||
-      (mergedConversations.find((c) => c.id === id)?.type) ||
+      mergedConversations.find((c) => c.id === id)?.type ||
       undefined;
 
-    const message: ChatMessage =
-      convType === "group"
-        ? {
-          senderId: userId,
-          senderName: name,
-          message: text,
-          createdAt: new Date(),
-          isOutgoing: true,
-          conversationId: conversationIdOfTab ?? undefined,
+    if (convType === "self") {
+      const message: ChatMessage = {
+        senderId: userId,
+        senderName: name,
+        message: text,
+        createdAt: new Date(),
+        isOutgoing: true,
+        conversationId: undefined,
+        selfType: "self", // set selfType to self if convType is self
+      };
+      setPrivateMessages((prev) => ({
+        ...prev,
+        [id]: [...(prev[id] || []), { ...message }],
+      }));
+      setDrafts((prev) => ({ ...prev, [id]: "" }));
+
+      const res = await apiSelfChat(text);
+      // Show alert self: content
+      // alert(`self: ${text}`); // remove alert or you may keep if needed
+
+      toast.info(
+        <div>
+          <b>Tôi:</b> <span>{text}</span>
+        </div>,
+        {
+          containerId: "self-chat",
+          style: { ...toastBaseStyle, background: "#dbebff", color: "#1d2939" },
         }
-        : {
-          senderId: userId,
-          message: text,
-          createdAt: new Date(),
-          isOutgoing: true,
-          conversationId: conversationIdOfTab ?? undefined,
+      );
+
+      // Nếu server trả về message bot, append vào luôn.
+      if (res && res.message && res.message.type === "bot") {
+        // { _id, userId, text, type, createdAt }
+        const botMessage: ChatMessage = {
+          senderId: res.message.userId || "bot",
+          senderName: "Bot",
+          message: res.message.text,
+          createdAt: new Date(res.message.createdAt),
+          isOutgoing: false,
+          conversationId: undefined,
+          selfType: res.message.type,
         };
+        setPrivateMessages((prev) => ({
+          ...prev,
+          [id]: [...(prev[id] || []), { ...botMessage }],
+        }));
+      }
+
+      setTimeout(() => {
+        const node = chatPanelsRef.current[id];
+        if (node) {
+          node.scrollTop = node.scrollHeight;
+        }
+      }, 0);
+      return;
+    }
+
+    const conversationIdOfTab =
+      tabConversationIds[id] ?? mergedConversations.find((c) => c.id === id)?.conversationId;
 
     if (convType === "group") {
+      const message: ChatMessage = {
+        senderId: userId,
+        senderName: name,
+        message: text,
+        createdAt: new Date(),
+        isOutgoing: true,
+        conversationId: conversationIdOfTab ?? undefined,
+      };
       setPrivateMessages((prev) => ({
         ...prev,
         [id]: [...(prev[id] || []), { ...message }],
@@ -1458,6 +1642,14 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
       tabOpenedRef.current[id] = true;
     }
 
+    const message: ChatMessage = {
+      senderId: userId,
+      message: text,
+      createdAt: new Date(),
+      isOutgoing: true,
+      conversationId: conversationIdOfTab ?? undefined,
+    };
+
     setPrivateMessages((prev) => {
       const updated = {
         ...prev,
@@ -1479,29 +1671,12 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
       }
       return next;
     });
-    setMinimizedIds((prev) => prev.filter((x) => x !== id));
-    setMinimizedUnread((prev) => {
-      if (prev[id]) {
-        const newState = { ...prev };
-        delete newState[id];
-        return newState;
-      }
-      return prev;
-    });
 
     try {
       if (conversationIdOfTab != null) {
-        sendPrivateMessage(
-          id.toString(),
-          text,
-          conversationIdOfTab.toString()
-        );
+        sendPrivateMessage(id.toString(), text, conversationIdOfTab.toString());
       } else {
-        sendPrivateMessage(
-          id.toString(),
-          text,
-          undefined
-        );
+        sendPrivateMessage(id.toString(), text, undefined);
       }
       setDrafts((prev) => ({ ...prev, [id]: "" }));
       setTimeout(() => {
@@ -1548,6 +1723,8 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
       convMessages?: ChatMessage[],
       convConversationId?: string | number
     ) => async (e: React.UIEvent<HTMLDivElement>) => {
+      // Don't load more for self chat
+      if (tabTypes[convId] === "self") return;
       const node = e.currentTarget;
 
       if (finishedScrollRef.current[convId]) return;
@@ -1629,14 +1806,10 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
           } finally {
             loadingScrollRef.current[convId] = false;
           }
-        } else {
-          // console.log(
-          //   "[ChatDock][handleChatPanelScroll] No valid conversationId to fetch more messages."
-          // );
         }
       }
     },
-    [userId]
+    [userId, tabTypes]
   );
 
   function isFirstMessageOfDay(messages: ChatMessage[], idx: number): boolean {
@@ -1661,14 +1834,14 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
     router.push(`/profile/${userIdTo}`);
   };
 
-  // SỬA: truy vấn ownerId khi mở group dialog, truyền vào state groupInfoDialog
   const handleShowGroupInfo = async (conv: ChatConversation) => {
     if (!conv || conv.type !== "group" || !conv.conversationId) return;
     let users: any[] = groupUsersMap[conv.id] || [];
-    let groupOwner: string | undefined = groupOwnerMap[conv.id]
-      || conv.owner
-      || groupCache[String(conv.conversationId)]?.owner
-      || undefined;
+    let groupOwner: string | undefined =
+      groupOwnerMap[conv.id] ||
+      conv.owner ||
+      groupCache[String(conv.conversationId)]?.owner ||
+      undefined;
     if (!users.length) {
       try {
         const result = await apiGetGroupUser(conv.conversationId.toString());
@@ -1692,7 +1865,7 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
       open: true,
       users,
       conv,
-      ownerId: groupOwner
+      ownerId: groupOwner,
     });
   };
 
@@ -1705,7 +1878,6 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
     });
   };
 
-  // ---------- BEGIN: Hàm xử lý giải tán nhóm ----------
   const handleDisbandGroup = () => {
     if (groupInfoDialog.conv && groupInfoDialog.conv.type === "group") {
       setShowDisbandGroupDialog({
@@ -1718,13 +1890,14 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
   const handleConfirmDisbandGroup = async () => {
     if (showDisbandGroupDialog.conversationId) {
       try {
-        const res = await apiDisbandGroupConversation(showDisbandGroupDialog.conversationId.toString());
-        console.log(res)
+        const res = await apiDisbandGroupConversation(
+          showDisbandGroupDialog.conversationId.toString()
+        );
         if (res && res.success) {
           toast.success(res.message);
         }
       } catch (err) {
-        toast.warn(getErrorMessage(err))
+        toast.warn(getErrorMessage(err));
       }
     }
     setShowDisbandGroupDialog({ open: false });
@@ -1732,9 +1905,7 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
   const handleCancelDisbandGroup = () => {
     setShowDisbandGroupDialog({ open: false });
   };
-  // ---------- END: Hàm xử lý giải tán nhóm ----------
 
-  // ---------- BEGIN: Hàm xử lý rời nhóm ----------
   const handleLeaveGroup = () => {
     if (groupInfoDialog.conv && groupInfoDialog.conv.type === "group") {
       setShowLeaveGroupDialog({
@@ -1747,12 +1918,22 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
   const handleConfirmLeaveGroup = async () => {
     if (showLeaveGroupDialog.conversationId) {
       try {
-        const res = await apiLeaveGroupConversation(showLeaveGroupDialog.conversationId.toString());
+        const res = await apiLeaveGroupConversation(
+          showLeaveGroupDialog.conversationId.toString()
+        );
         if (res && res.success) {
           toast.success(res.message);
+          // Close the tab after leaving the group
+          setOpenIds((prevOpenIds) =>
+            prevOpenIds.filter(
+              (id) =>
+                id !== showLeaveGroupDialog.conversationId &&
+                id !== String(showLeaveGroupDialog.conversationId)
+            )
+          );
         }
       } catch (err) {
-        toast.warn(getErrorMessage(err))
+        toast.warn(getErrorMessage(err));
       }
     }
     setShowLeaveGroupDialog({ open: false });
@@ -1760,9 +1941,12 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
   const handleCancelLeaveGroup = () => {
     setShowLeaveGroupDialog({ open: false });
   };
-  // ---------- END: Hàm xử lý rời nhóm ----------
 
-  if (openConversations.length === 0 && minimizedConversations.length === 0) return null;
+  if (openConversations.length === 0) return null;
+
+  const handleVideoCall = (toId: string | number) => {
+    alert(`Video call to userId: ${toId}`);
+  };
 
   return (
     <>
@@ -1814,6 +1998,57 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
                 }}
               >
                 {groupInfoDialog.conv.title}
+              </div>
+            )}
+            {/* Hiển thị link tham gia nhóm */}
+            {groupInfoDialog.conv?.id && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ color: "#b3b3b3", fontSize: 14, marginBottom: 4 }}>
+                  Link tham gia nhóm:
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div
+                    key={groupInfoDialog.conv.id}
+                    style={{
+                      color: "#4bb3fd",
+                      wordBreak: "break-all",
+                      textDecoration: "underline",
+                      fontSize: 15,
+                      flex: 1,
+                      padding: "5px 0",
+                      background: "transparent",
+                      border: "none",
+                      userSelect: "all",
+                      cursor: "default"
+                    }}
+                  >
+                    {(process.env.NEXT_PUBLIC_CLIENT_URL || "http://localhost:3000")}/groupchatjoin?idg={groupInfoDialog.conv.id}
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="Copy group join link"
+                    key={groupInfoDialog.conv.id}
+                    onClick={() => {
+                      const url = `${process.env.NEXT_PUBLIC_CLIENT_URL || "http://localhost:3000"}/groupchatjoin?idg=${groupInfoDialog.conv?.id ?? ""}`;
+                      navigator.clipboard && navigator.clipboard.writeText
+                        ? navigator.clipboard.writeText(url)
+                        : document.execCommand('copy', true, url);
+                    }}
+                    style={{
+                      background: "#353f4b",
+                      border: "none",
+                      borderRadius: 6,
+                      color: "#fff",
+                      padding: "5px 10px",
+                      fontSize: 14,
+                      marginLeft: 4,
+                      cursor: "pointer",
+                      transition: "background 0.2s",
+                    }}
+                  >
+                    Copy
+                  </button>
+                </div>
               </div>
             )}
             {/* Danh sách thành viên */}
@@ -1875,31 +2110,61 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
             </div>
             {/* Thêm nút Giải tán nhóm hoặc Rời nhóm */}
             {groupInfoDialog.conv?.type === "group" && groupInfoDialog.ownerId === userId && (
-              <button
-                type="button"
-                style={{
-                  marginTop: 18,
-                  background: "#e11d48",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: "8px",
-                  padding: "10px",
-                  fontWeight: 700,
-                  fontSize: 15,
-                  cursor: "pointer",
-                  width: "100%",
-                  transition: "background 0.2s",
-                }}
-                onClick={handleDisbandGroup}
-                onMouseEnter={e =>
-                  ((e.currentTarget as HTMLElement).style.background = "#c70037")
-                }
-                onMouseLeave={e =>
-                  ((e.currentTarget as HTMLElement).style.background = "#e11d48")
-                }
-              >
-                Giải tán nhóm
-              </button>
+              <div style={{ width: "100%", display: "flex", gap: 12, flexDirection: "column", marginTop: 18 }}>
+                <button
+                  type="button"
+                  style={{
+                    background: "#e11d48",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "8px",
+                    padding: "10px",
+                    fontWeight: 700,
+                    fontSize: 15,
+                    cursor: "pointer",
+                    width: "100%",
+                    transition: "background 0.2s",
+                  }}
+                  onClick={handleDisbandGroup}
+                  onMouseEnter={e =>
+                    ((e.currentTarget as HTMLElement).style.background = "#c70037")
+                  }
+                  onMouseLeave={e =>
+                    ((e.currentTarget as HTMLElement).style.background = "#e11d48")
+                  }
+                >
+                  Giải tán nhóm
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    background: "#2563eb",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: "8px",
+                    padding: "10px",
+                    fontWeight: 700,
+                    fontSize: 15,
+                    cursor: "pointer",
+                    width: "100%",
+                    transition: "background 0.2s",
+                  }}
+                  onClick={() => {
+                    if (groupInfoDialog.conv?.conversationId) {
+                      router.push(`/groupchatmanager?idg=${groupInfoDialog.conv.conversationId}`);
+                      setGroupInfoDialog({ open: false, users: [], conv: null, ownerId: undefined });
+                    }
+                  }}
+                  onMouseEnter={e =>
+                    ((e.currentTarget as HTMLElement).style.background = "#204bba")
+                  }
+                  onMouseLeave={e =>
+                    ((e.currentTarget as HTMLElement).style.background = "#2563eb")
+                  }
+                >
+                  Quản lý nhóm
+                </button>
+              </div>
             )}
             {groupInfoDialog.conv?.type === "group" && groupInfoDialog.ownerId !== userId && (
               <button
@@ -2134,7 +2399,7 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
           >
             <div style={{ fontSize: 18, fontWeight: 700, color: "#e53935", marginBottom: 8 }}>Báo cáo người dùng</div>
             <div style={{ fontSize: 15, color: "#eee", marginBottom: 18 }}>
-              Bạn có chắc chắn muốn báo cáo tin nhắn của người dùng này không?
+              Bạn có chắc chắn muốn báo cáo tin nhắn này không?
             </div>
             <div className="flex gap-3 justify-end">
               <button
@@ -2155,123 +2420,29 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
       )}
       {/* ... (the rest of render unchanged) ... */}
       <div
-        className="fixed right-0 z-100 flex items-end gap-3 select-none"
+        className="fixed right-0 z-100 flex items-end gap-3"
         style={{
           bottom: 0,
           marginBottom: 0,
         }}
       >
-        {/* Minimized tab icons */}
-        <div className="flex flex-col-reverse items-center gap-2 !mb-2">
-          {minimizedConversations.map((c) => (
-            <div
-              key={c.id}
-              className="relative"
-              style={{ width: 48, height: 48, marginBottom: 12, marginRight: 0 }}
-            >
-              <button
-                type="button"
-                className="w-12 h-12 rounded-full bg-[#2563eb] flex items-center justify-center text-white font-semibold shadow-lg transition"
-                style={{
-                  marginRight: 0,
-                  paddingRight: 0,
-                  cursor: "pointer",
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: 48,
-                  height: 48,
-                  zIndex: 1,
-                  marginBottom: 8,
-                }}
-                onClick={() => handleOpenConversation(c.id)}
-                title={c.title}
-                tabIndex={0}
-                onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLElement).style.filter =
-                    "brightness(1.14)";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.filter = "";
-                }}
-              >
-                {minimizedUnread[c.id] && minimizedUnread[c.id] > 0 && (
-                  <span
-                    style={{
-                      position: "absolute",
-                      top: 0,
-                      left: 0,
-                      background: "#e11d48",
-                      color: "#fff",
-                      minWidth: 18,
-                      height: 18,
-                      lineHeight: "18px",
-                      borderRadius: 9,
-                      fontSize: 12,
-                      fontWeight: 700,
-                      zIndex: 10,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      padding: "0 4px",
-                      boxSizing: "border-box",
-                      boxShadow: "0 0 0 2px #444",
-                    }}
-                  >
-                    {minimizedUnread[c.id]}
-                  </span>
-                )}
-                {c.avatarUrl ? (
-                  <img
-                    src={c.avatarUrl}
-                    alt={c.title}
-                    className="w-full h-full rounded-full object-cover"
-                  />
-                ) : (
-                  <span className="text-lg">
-                    {c.title?.[0]?.toUpperCase() || "C"}
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleClose(c.id);
-                }}
-                className="absolute bg-[#23272f] hover:bg-[#e11d48] hover:text-white text-gray-400 transition-all border-none rounded-full flex items-center justify-center"
-                style={{
-                  top: -6,
-                  right: -6,
-                  width: 20,
-                  height: 20,
-                  zIndex: 2,
-                  fontSize: 12,
-                  boxShadow: "0 1px 6px rgba(0,0,0,.17)",
-                  cursor: "pointer",
-                  border: "1px solid #444",
-                }}
-                title="Đóng"
-                tabIndex={0}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-
         {/* Tabs đang mở */}
         <div className="flex flex-row-reverse gap-3">
           {openConversations.map((conv) => {
-            const groupUsers = conv.type === "group" && conv.conversationId
-              ? groupUsersMap[conv.id] || []
-              : [];
-            const groupOwnerId = conv.type === "group"
-              ? (groupOwnerMap[conv.id] || conv.owner || groupCache[String(conv.conversationId)]?.owner)
-              : undefined;
+            const groupUsers =
+              conv.type === "group" && conv.conversationId
+                ? groupUsersMap[conv.id] || []
+                : [];
+            const groupOwnerId =
+              conv.type === "group"
+                ? groupOwnerMap[conv.id] ||
+                conv.owner ||
+                groupCache[String(conv.conversationId)]?.owner
+                : undefined;
 
-            // --- GROUP MESSAGE LOGIC (KHÔNG bundle nữa nếu là tin nhắn đầu ngày!) ---
-            // Sửa: Chia group theo day, và CHO DÙ CÙNG 1 USER LIỀN NHAU NHỮNG tin nhắn đầu ngày vẫn tách bundle
+            // --- AI summary: lookup conv id, so summary popover mount point anchor key by conversationId or id
+            const summaryCid = conv.conversationId ?? conv.id;
+            const summaryState = groupSummaryPopovers[summaryCid] || { open: false, isLoading: false, summary: "" };
 
             const getMessageBundlesByDay = (messages: ChatMessage[]) => {
               let bundles: Array<{
@@ -2390,24 +2561,38 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
                   minHeight: 575,
                   maxHeight: 575,
                   marginBottom: 0,
+                  position: "relative",
                 }}
               >
                 {/* Header */}
-                <div className="flex items-center justify-between px-3 py-2 bg-[#1f2125] border-b border-[#2e3033]">
+                <div className="flex items-center justify-between px-3 py-2 bg-[#1f2125] border-b border-[#2e3033]" style={{ position: "relative" }}>
+                  {/* Custom header left: remove onClick from container, click on ONLY avatar and ONLY name */}
                   <div
-                    className="flex items-center gap-2 cursor-pointer group"
+                    className="flex items-center gap-2 group"
                     tabIndex={0}
-                    title={conv.type === "group" ? "Xem thành viên nhóm" : "Xem hồ sơ người dùng"}
                     style={{ userSelect: "none" }}
-                    onClick={async () => {
-                      if (conv.type === "private") {
-                        if (conv.id && conv.id !== userId) handleGoToUserProfile(conv.id.toString());
-                      } else if (conv.type === "group") {
-                        handleShowGroupInfo(conv);
-                      }
-                    }}
                   >
-                    <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-xs font-semibold">
+                    <div
+                      className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-xs font-semibold"
+                      style={{ cursor: (conv.type === "private" || conv.type === "group") ? "pointer" : undefined }}
+                      title={
+                        conv.type === "group"
+                          ? "Xem thành viên nhóm"
+                          : conv.type === "private"
+                            ? "Xem hồ sơ người dùng"
+                            : undefined
+                      }
+                      // Chỉ click avatar mới chuyển trang/hiện modal
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (conv.type === "private") {
+                          if (conv.id && conv.id !== userId)
+                            handleGoToUserProfile(conv.id.toString());
+                        } else if (conv.type === "group") {
+                          handleShowGroupInfo(conv);
+                        }
+                      }}
+                    >
                       {conv.avatarUrl ? (
                         <img
                           src={conv.avatarUrl}
@@ -2420,69 +2605,192 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
                     </div>
                     <div className="flex flex-col leading-tight">
                       <span
-                        className="text-sm font-semibold truncate group-hover:underline group-hover:text-blue-400"
-                        style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }}
+                        className="text-sm font-semibold truncate"
+                        style={{
+                          cursor: (conv.type === "private" || conv.type === "group") ? "pointer" : undefined,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 3,
+                        }}
+                        // Chỉ click vào tên mới chuyển trang/hiện modal
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (conv.type === "private") {
+                            if (conv.id && conv.id !== userId)
+                              handleGoToUserProfile(conv.id.toString());
+                          } else if (conv.type === "group") {
+                            handleShowGroupInfo(conv);
+                          }
+                        }}
+                        title={
+                          conv.type === "group"
+                            ? "Xem thành viên nhóm"
+                            : conv.type === "private"
+                              ? "Xem hồ sơ người dùng"
+                              : undefined
+                        }
                       >
                         {/* Vương miện trước tên nếu là owner của group */}
-                        {conv.type === "group" && groupOwnerId && userId && groupOwnerId === userId && (
-                          <FontAwesomeIcon icon={faCrown} style={{ color: "#ffd84a", fontSize: "15px", verticalAlign: "middle", marginRight: 2 }} />
-                        )}
+                        {conv.type === "group" &&
+                          groupOwnerId &&
+                          userId &&
+                          groupOwnerId === userId && (
+                            <FontAwesomeIcon
+                              icon={faCrown}
+                              style={{
+                                color: "#ffd84a",
+                                fontSize: "15px",
+                                verticalAlign: "middle",
+                                marginRight: 2,
+                              }}
+                            />
+                          )}
                         {conv.title}
+                        {conv.type === "self" && (
+                          <span
+                            style={{
+                              marginLeft: 5,
+                              fontStyle: "italic",
+                              fontWeight: 400,
+                              fontSize: 13,
+                              color: "#d4d4d4",
+                            }}
+                          >
+                            (ghi chú)
+                          </span>
+                        )}
                       </span>
                       <span className="text-[11px] text-gray-400">
-                        Đang hoạt động
+                        {conv.type === "self"
+                          ? "Chỉ mình bạn xem"
+                          : "Đang hoạt động"}
                       </span>
                     </div>
+                    {/* ====== REPORT BUTTON (Only for non-self) ====== */}
+                    {conv.type !== "self" && (
+                      <div style={{ marginLeft: 9, position: "relative" }}>
+                        <button
+                          type="button"
+                          className="flex items-center justify-center rounded-full border-none"
+                          style={{
+                            width: 29,
+                            height: 29,
+                            backgroundColor: "transparent",
+                            transition: "background .20s",
+                            fontSize: 15,
+                            color: "#e11d48",
+                            cursor: "pointer",
+                            border: "none",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            position: "relative",
+                            outline: "none",
+                          }}
+                          title="Báo cáo & chặn người dùng"
+                          onClick={e => {
+                            e.stopPropagation();
+                            handleReport(conv);
+                          }}
+                          onMouseEnter={e =>
+                            ((e.currentTarget as HTMLElement).style.background = "#36253d")
+                          }
+                          onMouseLeave={e =>
+                            ((e.currentTarget as HTMLElement).style.background = "transparent")
+                          }
+                        >
+                          <FontAwesomeIcon icon={faFlag} />
+                        </button>
+                      </div>
+                    )}
+                    {/* ===== AI Summary Button/Popover (Only for group) ===== */}
+                    {conv.type === "group" && (
+                      <div style={{ marginLeft: 9, position: "relative" }}>
+                        <button
+                          type="button"
+                          // SUMMARY BUTTON STYLING + HOVER
+                          style={{
+                            width: 29,
+                            height: 29,
+                            borderRadius: "50%",
+                            background: summaryState.open ? "#4f4f53" : "transparent",
+                            color: "#fff",
+                            border: "none",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            transition: "background .20s",
+                            outline: "none",
+                            fontSize: 15,
+                            position: "relative",
+                            cursor: "pointer",
+                          }}
+                          title="Xem tóm tắt đoạn chat (AI)"
+                          onClick={e => {
+                            e.stopPropagation();
+                            handleOpenGroupSummary(conv);
+                          }}
+                          onMouseEnter={e =>
+                            summaryState.open ||
+                            ((e.currentTarget as HTMLElement).style.background = "#46464b")
+                          }
+                          onMouseLeave={e =>
+                            summaryState.open ||
+                            ((e.currentTarget as HTMLElement).style.background = "transparent")
+                          }
+                        >
+                          <FontAwesomeIcon icon={faRobot} />
+                        </button>
+                        {/* Popover summary content */}
+                        <div style={{
+                          position: "relative",
+                          width: 0,
+                          zIndex: 10998,
+                        }}>
+                          <GroupSummaryPopover
+                            open={!!summaryState.open}
+                            summary={
+                              summaryState.isLoading
+                                ? "Đang lấy tóm tắt AI..."
+                                : summaryState.summary
+                            }
+                            onClose={() => handleCloseGroupSummary(summaryCid)}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Video call button for private chat */}
+                    {conv.type === "private" && (
+                      <button
+                        type="button"
+                        className="flex items-center justify-center rounded-full border-none"
+                        style={{
+                          width: 36,
+                          height: 36,
+                          backgroundColor: "transparent",
+                          transition: "background-color 0.2s",
+                          fontSize: 21,
+                          color: "#22c55e",
+                          cursor: "pointer",
+                        }}
+                        title="Gọi video"
+                        onClick={() => handleVideoCall(conv.id)}
+                        onMouseEnter={(e) =>
+                          (e.currentTarget as HTMLElement).style.backgroundColor = "#193c2b"
+                        }
+                        onMouseLeave={(e) =>
+                          (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"
+                        }
+                      >
+                        <FontAwesomeIcon icon={faVideo} />
+                      </button>
+                    )}
+
+                    {/* ===== END AI summarize popover/report button ===== */}
                   </div>
                   <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      className="flex items-center justify-center rounded-full border-none"
-                      style={{
-                        width: 36,
-                        height: 36,
-                        backgroundColor: "transparent",
-                        transition: "background-color 0.2s",
-                        fontSize: 21,
-                        color: "#e11d48",
-                        cursor: "pointer",
-                      }}
-                      title="Báo cáo & chặn người dùng"
-                      onClick={() => handleReport(conv)}
-                      onMouseEnter={e =>
-                        (e.currentTarget as HTMLElement).style.backgroundColor =
-                        "#36253d"
-                      }
-                      onMouseLeave={e =>
-                        (e.currentTarget as HTMLElement).style.backgroundColor =
-                        "transparent"
-                      }
-                    >
-                      <FontAwesomeIcon icon={faFlag} />
-                    </button>
-                    <button
-                      type="button"
-                      className="flex items-center justify-center rounded-full border-none"
-                      style={{
-                        width: 36,
-                        height: 36,
-                        backgroundColor: "transparent",
-                        transition: "background-color 0.2s",
-                        fontSize: 24,
-                        color: "#2563eb",
-                        cursor: "pointer",
-                      }}
-                      onClick={() => handleMinimize(conv.id)}
-                      title="Thu gọn"
-                      onMouseEnter={(e) =>
-                        (e.currentTarget.style.backgroundColor = "#35383d")
-                      }
-                      onMouseLeave={(e) =>
-                        (e.currentTarget.style.backgroundColor = "transparent")
-                      }
-                    >
-                      −
-                    </button>
+
                     <button
                       type="button"
                       className="flex items-center justify-center rounded-full border-none"
@@ -2510,33 +2818,101 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
                 </div>
 
                 {/* Danh sách tin nhắn */}
-                {/* ... message list unchanged ... */}
                 <div
                   className="flex-1 px-3 py-2 space-y-1 overflow-y-auto custom-scroll"
                   style={{ maxHeight: 575 - 98 }}
-                  ref={el => {
+                  ref={(el) => {
                     chatPanelsRef.current[conv.id] = el;
                   }}
                   onScroll={handleChatPanelScroll(conv.id, conv.messages, conv.conversationId)}
                 >
-                  {/* Keep as original for message rendering */}
                   {tabLoading[conv.id] ? (
                     <div className="flex items-center justify-center h-full py-8">
                       <span className="text-xs text-gray-500 flex items-center gap-2">
                         <svg className="animate-spin h-4 w-4 text-gray-500" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                          <circle
+                            className="opacity-25"
+                            cx="12"
+                            cy="12"
+                            r="10"
+                            stroke="currentColor"
+                            strokeWidth="4"
+                            fill="none"
+                          />
+                          <path
+                            className="opacity-75"
+                            fill="currentColor"
+                            d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                          />
                         </svg>
                         Đang tải tin nhắn...
                       </span>
                     </div>
                   ) : (
                     <>
-                      {/* Omitted for brevity: keep your message rendering block as in original */}
-                      {/* ... */}
+                      {/* GROUP */}
                       {conv.type === "group"
                         ? (() => {
-                          const bundles = getMessageBundlesByDay(conv.messages);
+                          const bundles = (() => {
+                            let bundles: Array<{
+                              senderId: string,
+                              senderName?: string,
+                              groupUserAvatar?: string | null,
+                              groupUserAvatarCroppedArea?: any,
+                              messages: Array<{ m: ChatMessage; idx: number }>
+                            }> = [];
+                            let lastBundle: any = null;
+                            let lastSenderId: string | undefined = undefined;
+                            let lastDateStr: string | undefined = undefined;
+                            const messages = conv.messages;
+                            for (let idx = 0; idx < messages.length; ++idx) {
+                              const m = messages[idx];
+                              const isOutgoing =
+                                m.isOutgoing !== undefined
+                                  ? m.isOutgoing
+                                  : m.senderId === userId;
+                              const dObj = new Date(m.createdAt);
+                              const dateStr = [
+                                dObj.getDate(),
+                                dObj.getMonth(),
+                                dObj.getFullYear()
+                              ].join("-");
+                              if (
+                                isOutgoing ||
+                                !lastBundle ||
+                                lastSenderId !== m.senderId ||
+                                lastDateStr !== dateStr
+                              ) {
+                                if (lastBundle) bundles.push(lastBundle);
+                                let groupUserName = m.senderName || "";
+                                let groupUserAvatar: string | null = null;
+                                let groupUserAvatarCroppedArea: any = null;
+
+                                if (conv.type === "group" && m.senderId) {
+                                  const member = groupUsers.find(u => u.userId === m.senderId);
+                                  if (member) {
+                                    groupUserName = member.name || m.senderName || "";
+                                    groupUserAvatar = member.avatar;
+                                    groupUserAvatarCroppedArea = member.avatarCroppedArea;
+                                  }
+                                }
+                                lastBundle = {
+                                  senderId: m.senderId,
+                                  senderName: groupUserName,
+                                  groupUserAvatar,
+                                  groupUserAvatarCroppedArea,
+                                  messages: [{ m, idx }]
+                                };
+                                lastSenderId = isOutgoing ? undefined : m.senderId;
+                                lastDateStr = dateStr;
+                              } else {
+                                lastBundle.messages.push({ m, idx });
+                              }
+                            }
+                            if (lastBundle) bundles.push(lastBundle);
+                            return bundles;
+                          })();
+
                           let prevBundleLastMsg: ChatMessage | undefined = undefined;
                           return bundles.map((bundle, bundleIdx) => {
                             const firstMsg = bundle.messages[0].m;
@@ -2564,25 +2940,14 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
                                 return (
                                   <React.Fragment key={m.id ?? idx}>
                                     {showDivider && (
-                                      <DateDivider title={timeInfo.full}>
-                                        {timeInfo.time} - {timeInfo.date}
-                                      </DateDivider>
+                                      <div className="flex flex-col items-center justify-center my-3 w-full">
+                                        <span className="text-[11.5px] text-[#a3a3a3] font-normal tracking-[.1px] bg-none rounded-none px-0" title={timeInfo.full}>{timeInfo.time} - {timeInfo.date}</span>
+                                        <div className="w-[80%] bg-red-50 h-px mt-0 mb-0" />
+                                      </div>
                                     )}
-                                    <div
-                                      className="flex w-full justify-end"
-                                      style={{
-                                        marginTop: undefined,
-                                      }}
-                                    >
+                                    <div className="flex w-full justify-end">
                                       <div className="flex-1 flex flex-col items-end max-w-[85%]">
-                                        <div
-                                          className="px-3 py-2 text-sm rounded-full break-words"
-                                          style={{
-                                            background: "#2458F8",
-                                            color: "#fff",
-                                          }}
-                                          title={timeInfo.full}
-                                        >
+                                        <div className="px-3 py-2 text-sm rounded-full break-words" style={{ background: "#2458F8", color: "#fff" }} title={timeInfo.full}>
                                           {m.message}
                                         </div>
                                       </div>
@@ -2593,27 +2958,26 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
                             }
 
                             return (
-                              <React.Fragment key={bundle.senderId + '-' + bundleIdx}>
+                              <React.Fragment key={bundle.senderId + "-" + bundleIdx}>
                                 {showDayDivider && (
-                                  <DateDivider title={full}>
-                                    {time} - {date}
-                                  </DateDivider>
+                                  <div className="flex flex-col items-center justify-center my-3 w-full">
+                                    <span className="text-[11.5px] text-[#a3a3a3] font-normal tracking-[.1px] bg-none rounded-none px-0" title={full}>{time} - {date}</span>
+                                    <div className="w-[80%] bg-red-50 h-px mt-0 mb-0" />
+                                  </div>
                                 )}
-                                <div
-                                  style={{
-                                    marginTop: hasTimeGapWithPrev ? 17 : undefined,
-                                  }}
-                                >
+                                <div style={{ marginTop: hasTimeGapWithPrev ? 17 : undefined }}>
                                   {bundle.senderName && (
                                     <div
-                                      className="mb-0.5 cursor-pointer hover:underline"
+                                      className="mb-0.5 hover:underline"
                                       style={{
                                         fontSize: 12,
                                         color: "#a0a0a0",
                                         fontWeight: 600,
                                         paddingLeft: AVATAR_SPACE,
+                                        cursor: (bundle.senderId && bundle.senderId !== userId) ? "pointer" : "default"
                                       }}
                                       title={formatDateTime(firstMsg.createdAt).full}
+                                      // Chỉ click vào TÊN mới gọi hàm
                                       onClick={() =>
                                         bundle.senderId && bundle.senderId !== userId
                                           ? handleGoToUserProfile(bundle.senderId)
@@ -2648,16 +3012,11 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
                                           <div style={{ marginRight: 8 }}>
                                             {bundle.groupUserAvatar ? (
                                               <img
-                                                src={
-                                                  getCloudinaryImageLink(
-                                                    bundle.groupUserAvatar,
-                                                    bundle.groupUserAvatarCroppedArea,
-                                                    32
-                                                  )
-                                                }
+                                                src={getCloudinaryImageLink(bundle.groupUserAvatar, bundle.groupUserAvatarCroppedArea, 32)}
                                                 alt={bundle.senderName}
                                                 className="w-8 h-8 rounded-full object-cover cursor-pointer"
                                                 style={{ minWidth: 32, minHeight: 32 }}
+                                                // Chỉ click vào avatar mới gọi hàm (không click cả cụm)
                                                 onClick={() =>
                                                   bundle.senderId && bundle.senderId !== userId
                                                     ? handleGoToUserProfile(bundle.senderId)
@@ -2666,8 +3025,13 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
                                               />
                                             ) : (
                                               <div
-                                                className="w-8 h-8 flex items-center justify-center bg-gray-500 rounded-full text-white text-xs cursor-pointer"
-                                                style={{ minWidth: 32, minHeight: 32 }}
+                                                className="w-8 h-8 flex items-center justify-center bg-gray-500 rounded-full text-white text-xs"
+                                                style={{
+                                                  minWidth: 32,
+                                                  minHeight: 32,
+                                                  cursor: (bundle.senderId && bundle.senderId !== userId) ? "pointer" : "default"
+                                                }}
+                                                // Chỉ click avatar mới gọi hàm
                                                 onClick={() =>
                                                   bundle.senderId && bundle.senderId !== userId
                                                     ? handleGoToUserProfile(bundle.senderId)
@@ -2682,10 +3046,7 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
                                         <div className="flex-1 flex flex-col items-start">
                                           <div
                                             className="px-3 py-2 text-sm rounded-full break-words"
-                                            style={{
-                                              background: "#303030",
-                                              color: "#fff",
-                                            }}
+                                            style={{ background: "#303030", color: "#fff" }}
                                             title={mFull}
                                           >
                                             {m.message}
@@ -2699,79 +3060,126 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
                             );
                           });
                         })()
-                        : (() => {
-                          let prevMsg: ChatMessage | undefined = undefined;
-                          return conv.messages.map((m, idx) => {
-                            const { date, time, full } = formatDateTime(m.createdAt);
-                            const isOutgoing =
-                              m.isOutgoing !== undefined
-                                ? m.isOutgoing
-                                : m.senderId === userId;
-                            const isTimeGapFromPrev =
-                              idx === 0
-                                ? false
-                                : getMinutesDiff(
-                                  conv.messages[idx - 1].createdAt,
-                                  m.createdAt
-                                ) > 59;
-
-                            prevMsg = m;
-
-                            const showDayDivider = isFirstMessageOfDay(conv.messages, idx);
-
-                            return (
-                              <React.Fragment key={m.id ?? idx}>
-                                {showDayDivider && (
-                                  <DateDivider title={full}>
-                                    {time} - {date}
-                                  </DateDivider>
-                                )}
-                                <div
-                                  className={`flex w-full ${isOutgoing ? "justify-end" : "justify-start"
-                                    }`}
-                                  style={{
-                                    marginTop: isTimeGapFromPrev ? 17 : undefined,
-                                  }}
-                                >
-                                  <div
-                                    className={`max-w-[85%] flex flex-col ${isOutgoing ? "items-end" : "items-start"
-                                      }`}
-                                  >
-                                    {(m.senderName ?? "").trim() !== "" && (
-                                      <span
-                                        className={"mb-0.5" + (!isOutgoing && m.senderId && m.senderId !== userId ? " cursor-pointer hover:underline" : "")}
+                        : conv.type === "self"
+                          ? (() => {
+                            let prevMsg: ChatMessage | undefined = undefined;
+                            return conv.messages.map((m, idx) => {
+                              const { date, time, full } = formatDateTime(m.createdAt);
+                              const isOutgoing = m.selfType === "self";
+                              const showDayDivider = isFirstMessageOfDay(conv.messages, idx);
+                              // Các tin tự gửi (selfType=self) hiện bên phải, không tên/không avatar, chỉ message bubble
+                              // Các tin bot (selfType=bot) hiện bên trái, tên Bot + robot icon bên phải tên, KHÔNG avatar, bubble left
+                              return (
+                                <React.Fragment key={m.id ?? idx}>
+                                  {showDayDivider && (
+                                    <div className="flex flex-col items-center justify-center my-3 w-full">
+                                      <span className="text-[11.5px] text-[#a3a3a3] font-normal tracking-[.1px] bg-none rounded-none px-0" title={full}>{time} - {date}</span>
+                                      <div className="w-[80%] bg-red-50 h-px mt-0 mb-0" />
+                                    </div>
+                                  )}
+                                  <div className={`flex w-full ${isOutgoing ? "justify-end" : "justify-start"}`}>
+                                    <div
+                                      className={`max-w-[85%] flex flex-col ${isOutgoing ? "items-end" : "items-start"}`}
+                                      style={{
+                                        alignItems: isOutgoing ? "flex-end" : "flex-start"
+                                      }}
+                                    >
+                                      {/* Name + icon chỉ hiện với bot */}
+                                      {!isOutgoing && (
+                                        <div
+                                          style={{
+                                            display: "flex",
+                                            alignItems: "center",
+                                            marginBottom: 2,
+                                            gap: 5
+                                          }}
+                                        >
+                                          <span
+                                            className="text-xs font-semibold"
+                                            style={{
+                                              color: "#bebebe"
+                                            }}
+                                          >
+                                            Bot
+                                          </span>
+                                          <FontAwesomeIcon
+                                            icon={faRobot}
+                                            style={{
+                                              color: "#bebebe",
+                                              fontSize: 15,
+                                              marginLeft: 2,
+                                              verticalAlign: "middle"
+                                            }}
+                                            title="Bot"
+                                          />
+                                        </div>
+                                      )}
+                                      {/* Không hiển thị thời gian từng tin nhắn */}
+                                      <div
+                                        className="px-3 py-2 text-sm rounded-2xl break-words"
                                         style={{
-                                          fontSize: 12,
-                                          color: "#a0a0a0",
-                                          fontWeight: 600,
-                                          paddingLeft: !isOutgoing ? AVATAR_SPACE : undefined,
+                                          background: isOutgoing ? "#2458F8" : "#232c39",
+                                          color: "#fff",
+                                          textAlign: "left",
+                                          borderRadius: 16,
+                                          fontWeight: isOutgoing ? 500 : 400,
                                         }}
                                         title={full}
-                                        onClick={
-                                          !isOutgoing && m.senderId && m.senderId !== userId
-                                            ? () => handleGoToUserProfile(m.senderId)
-                                            : undefined
-                                        }
                                       >
-                                        {m.senderName}
-                                      </span>
-                                    )}
-                                    <div
-                                      className="px-3 py-2 text-sm rounded-full break-words"
-                                      style={{
-                                        background: isOutgoing ? "#2458F8" : "#303030",
-                                        color: "#fff",
-                                      }}
-                                      title={full}
-                                    >
-                                      {m.message}
+                                        {m.message}
+                                      </div>
+                                      {/* Thêm hướng dẫn sử dụng bot ở cuối cùng chỉ xuất hiện ở message cuối */}
+                                      {idx === conv.messages.length - 1 && (
+                                        <div className="w-full flex justify-end mt-2">
+                                          <span className="text-[11px] text-gray-400 italic">
+                                            @bot để sử dụng chatbot
+                                          </span>
+                                        </div>
+                                      )}
+
                                     </div>
                                   </div>
-                                </div>
-                              </React.Fragment>
-                            );
-                          });
-                        })()}
+                                </React.Fragment>
+                              );
+                            });
+
+                          })()
+                          :
+                          (() => {
+                            let prevMsg: ChatMessage | undefined = undefined;
+                            const messages = conv.messages || [];
+                            return messages.map((m, idx) => {
+                              const { date, time, full } = formatDateTime(m.createdAt);
+                              const showDayDivider = isFirstMessageOfDay(messages, idx);
+                              const isOutgoing = m.isOutgoing !== undefined ? m.isOutgoing : m.senderId === userId;
+                              // Allow for attachments/readBy if available but fallback-safe
+                              return (
+                                <React.Fragment key={m.id ?? idx}>
+                                  {showDayDivider && (
+                                    <div className="flex flex-col items-center justify-center my-3 w-full">
+                                      <span className="text-[11.5px] text-[#a3a3a3] font-normal tracking-[.1px] bg-none rounded-none px-0" title={full}>{time} - {date}</span>
+                                      <div className="w-[80%] bg-red-50 h-px mt-0 mb-0" />
+                                    </div>
+                                  )}
+                                  <div className={`flex w-full ${isOutgoing ? "justify-end" : "justify-start"}`}>
+                                    <div className={`flex flex-col ${isOutgoing ? "items-end" : "items-start"} max-w-[85%]`}>
+                                      <div
+                                        className="px-3 py-2 text-sm rounded-full break-words"
+                                        style={{
+                                          background: isOutgoing ? "#2458F8" : "#303030",
+                                          color: "#fff"
+                                        }}
+                                        title={full}
+                                      >
+                                        {m.message}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </React.Fragment>
+                              );
+                            });
+                          })()
+                      }
                       {conv.messages.length === 0 && (
                         <div className="text-xs text-gray-500 text-center py-4">
                           Hãy bắt đầu cuộc trò chuyện...
@@ -2782,26 +3190,58 @@ const ChatDock: React.FC<ChatDockProps> & { openChat?: Function } = ({
                 </div>
 
                 {/* Ô nhập tin nhắn */}
+                {/* ... unchanged input, send button, etc ... */}
                 <div className="border-t border-[#2e3033] px-3 py-2 bg-[#1b1d20]">
                   <div className="flex items-center gap-2">
-                    <input
-                      className="flex-1 bg-[#121316] text-sm text-white px-3 py-2 rounded-full outline-none border border-transparent focus:border-blue-500"
-                      placeholder="Nhập tin nhắn..."
-                      value={drafts[conv.id] || ""}
-                      onChange={(e) =>
-                        handleChangeDraft(conv.id, e.target.value)
-                      }
-                      onKeyDown={async (e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          await handleSend(conv.id);
-                        }
-                      }}
-                      disabled={false || !!tabLoading[conv.id]}
-                    />
+                    <div className="relative flex-1">
+                      <input
+                        className="w-full bg-[#121316] text-sm text-white px-3 py-2 rounded-full outline-none border border-transparent focus:border-blue-500"
+                        placeholder="Nhập tin nhắn..."
+                        value={drafts[conv.id] || ""}
+                        onChange={(e) => handleChangeDraft(conv.id, e.target.value)}
+                        onKeyDown={async (e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            await handleSend(conv.id);
+                          }
+                        }}
+                        disabled={!!tabLoading[conv.id]}
+                      />
+                      {conv.type === "self" && drafts[conv.id]?.startsWith("@bot ") && (
+                        <span
+                          className="absolute left-2 top-1/2 -translate-y-1/2 text-[13px] cursor-pointer group"
+                          style={{
+                            pointerEvents: "auto",
+                            whiteSpace: "nowrap",
+                          }}
+                          tabIndex={0}
+                        >
+                          <span className="group relative" style={{ display: "inline-flex", alignItems: "center" }}>
+                            <span
+                              style={{
+                                background: "#2563eb",
+                                color: "#fff",
+                                borderRadius: 5,
+                                padding: "1px 2px",
+                                marginLeft: 0,
+                                marginRight: 0,
+                                fontWeight: 500,
+                                fontSize: 13,
+                                display: "inline-block",
+                              }}
+                            >
+                              @ bot
+                            </span>
+                            <span className="absolute left-full -translate-x-1/2 -top-8 mt-1 w-max bg-[#232c39] text-white text-xs px-3 py-1 rounded shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none z-50 transition-opacity">
+                              Sử dụng chatbot
+                            </span>
+                          </span>
+                        </span>
+                      )}
+                    </div>
                     <button
                       type="button"
-                      className="px-3 py-2 text-sm rounded-full bg-[#2563eb] text-white font-semibold hover:brightness-110 disabled:opacity-50"
+                      className="px-3 py-2 text-sm rounded-full bg-[#2563eb] text-white font-semibold hover:brightness-110 cursor-pointer disabled:opacity-50"
                       onClick={async () => await handleSend(conv.id)}
                       disabled={
                         !((drafts[conv.id] || "").trim().length) || !!tabLoading[conv.id]

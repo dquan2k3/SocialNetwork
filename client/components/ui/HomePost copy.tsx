@@ -55,12 +55,7 @@ type PostType = {
     _showTempUsername?: string;
 };
 
-type HomePostProps = {
-    isBottom?: boolean;
-    resetIsBottom?: () => void;
-};
-
-export default function HomePost({ isBottom, resetIsBottom }: HomePostProps) {
+export default function HomePost() {
     const [isPosting, setIsPosting] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [textToPost, setTextToPost] = useState("");
@@ -91,22 +86,17 @@ export default function HomePost({ isBottom, resetIsBottom }: HomePostProps) {
     const [pendingReactPostId, setPendingReactPostId] = useState<string | null>(null);
     const [pendingSharePostId, setPendingSharePostId] = useState<string | null>(null);
 
-    // --- CURSOR PAGINATION ---
-    const [cursorAt, setCursorAt] = useState<string | null>(null);
-    const [fetchingMore, setFetchingMore] = useState(false);
-    const [hasMore, setHasMore] = useState(true);
-    // const loadMoreRef = useRef<HTMLDivElement | null>(null); // no longer need intersectionObserver
-
-    // Initial fetch
     useEffect(() => {
         setLoadingPosts(true);
         setError('');
         apiGetHomePost()
             .then((res: any) => {
+                console.log(res)
                 if (res?.data?.posts) {
-                    // Patch all posts
+                    // Ensure reactCounts exists and is filled
                     const patchedPosts = res.data.posts.map((p: any) => {
                         let reactCounts = p.reactCounts;
+                        // Patch to always have all reactions
                         if (!reactCounts) {
                             reactCounts = { like: 0, love: 0, fun: 0, sad: 0, angry: 0 };
                         } else {
@@ -119,9 +109,11 @@ export default function HomePost({ isBottom, resetIsBottom }: HomePostProps) {
                             };
                         }
                         let myReact = typeof p.myReact !== "undefined" ? p.myReact : null;
+                        // If legacy "liked" field, infer myReact for backward compatibility
                         if (typeof myReact === "undefined" && typeof p.liked !== "undefined") {
                             myReact = p.liked ? "like" : null;
                         }
+                        //reactCounts = { like: 11, love: 11, fun: 11, sad: 11, angry: 0 };
                         return {
                             ...p,
                             reactCounts,
@@ -133,89 +125,19 @@ export default function HomePost({ isBottom, resetIsBottom }: HomePostProps) {
                         };
                     });
                     setPosts(patchedPosts);
-                    setCursorAt(res.data.cursorAt ?? null);
-                    setHasMore(Array.isArray(res.data.posts) && res.data.posts.length > 0);
                 } else {
                     setPosts([]);
-                    setHasMore(false);
                 }
             })
             .catch((err) => {
                 setError("Không tải được bài viết.");
                 setPosts([]);
-                setHasMore(false);
                 console.error('apiGetProfilePost error:', err);
             })
             .finally(() => {
                 setLoadingPosts(false);
             });
     }, []);
-
-    // Infinite scroll: using isBottom (from prop) instead of IntersectionObserver
-    useEffect(() => {
-        if (!hasMore || loadingPosts) return;
-        if (!isBottom) return;
-        if (fetchingMore) return;
-        handleFetchMore();
-        // eslint-disable-next-line
-    }, [isBottom, hasMore, loadingPosts, fetchingMore]);
-
-    // Gọi resetIsBottom sau khi load more xong
-    useEffect(() => {
-        if (!fetchingMore && isBottom && typeof resetIsBottom === "function") {
-            resetIsBottom();
-        }
-    }, [fetchingMore, isBottom, resetIsBottom]);
-
-    const handleFetchMore = useCallback(() => {
-        if (fetchingMore || !cursorAt || !hasMore) return;
-        setFetchingMore(true);
-        apiGetHomePost(cursorAt)
-            .then((res: any) => {
-                if (res?.data?.posts) {
-                    const patchedPosts = res.data.posts.map((p: any) => {
-                        let reactCounts = p.reactCounts;
-                        if (!reactCounts) {
-                            reactCounts = { like: 0, love: 0, fun: 0, sad: 0, angry: 0 };
-                        } else {
-                            reactCounts = {
-                                like: typeof reactCounts.like === "number" ? reactCounts.like : 0,
-                                love: typeof reactCounts.love === "number" ? reactCounts.love : 0,
-                                fun: typeof reactCounts.fun === "number" ? reactCounts.fun : 0,
-                                sad: typeof reactCounts.sad === "number" ? reactCounts.sad : 0,
-                                angry: typeof reactCounts.angry === "number" ? reactCounts.angry : 0,
-                            };
-                        }
-                        let myReact = typeof p.myReact !== "undefined" ? p.myReact : null;
-                        if (typeof myReact === "undefined" && typeof p.liked !== "undefined") {
-                            myReact = p.liked ? "like" : null;
-                        }
-                        return {
-                            ...p,
-                            reactCounts,
-                            myReact,
-                            commentCount: typeof p.commentCount === "number" ? p.commentCount : 0,
-                            shareCount: typeof p.shareCount === "number" ? p.shareCount : 0,
-                            likeCount: typeof p.likeCount === "number" ? p.likeCount : reactCounts.like,
-                            files: Array.isArray(p.files) ? p.files : [],
-                        };
-                    });
-                    setPosts(prev => [...prev, ...patchedPosts]);
-                    setCursorAt(res.data.cursorAt ?? null);
-                    setHasMore(Array.isArray(res.data.posts) && res.data.posts.length > 0);
-                } else {
-                    setHasMore(false);
-                }
-            })
-            .catch((err) => {
-                setError("Không tải thêm được bài viết.");
-                setHasMore(false);
-                console.error('apiGetHomePost (more) error:', err);
-            })
-            .finally(() => {
-                setFetchingMore(false);
-            });
-    }, [cursorAt, fetchingMore, hasMore]);
 
     const selectedPost: PostType | null = selectedPostId
         ? posts.find((p) => p._id === selectedPostId) || null
@@ -404,6 +326,7 @@ export default function HomePost({ isBottom, resetIsBottom }: HomePostProps) {
         setIsLoading(true);
         try {
             const res = await apiUploadPost(postData);
+            console.log(res)
             if (res && res.data && res.data.success && res.data.post) {
                 // Xử lý tạm thời các trường name và avatar nếu API chưa trả về
                 const postFromApi = res.data.post;
@@ -518,6 +441,7 @@ export default function HomePost({ isBottom, resetIsBottom }: HomePostProps) {
         // Call real API
         try {
             const res = await apiReactPost({ postId, react: reactionName || "" });
+            // console.log(res)
             if (res && res.success && res.reactCounts) {
                 const newReact = typeof res.react === "string" ? res.react : reactionName;
                 setPosts((prev) =>
@@ -1081,17 +1005,6 @@ export default function HomePost({ isBottom, resetIsBottom }: HomePostProps) {
                                 </div>
                             );
                         })}
-
-                    {/* Infinite scroll: Loader and sentinel */}
-                    {hasMore && (
-                        <div style={{ height: 10 }}>
-                            {!loadingPosts && fetchingMore && (
-                                <div className="flex justify-center py-4 text-[#58A2F7]">
-                                    <LoadingDots /> Đang tải thêm bài viết...
-                                </div>
-                            )}
-                        </div>
-                    )}
                 </div>
             </div>
         </div>

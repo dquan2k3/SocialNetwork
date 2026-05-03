@@ -9,15 +9,19 @@ import {
   apiChangeLiving,
   apiChangeName,
   apiChangeSchool,
-  apiGetInfo,
   apiGetProfile,
 } from "@/api/profile.api";
+// Redux
+import { useDispatch } from "react-redux";
+import { changeName } from "@/store/slices/userSlice";
 
 interface OverviewProps {
   userId?: string;
 }
 
 export default function Overview({ userId }: OverviewProps) {
+  const dispatch = useDispatch();
+
   // Name states
   const [name, setName] = useState("");
   const [editName, setEditName] = useState(false);
@@ -39,6 +43,33 @@ export default function Overview({ userId }: OverviewProps) {
   const [hometownInput, setHometownInput] = useState("");
   const [privateHometown, setPrivateHometown] = useState("public");
   const [pHometown, setPHometown] = useState("public");
+
+  // Provinces for select options
+  const [provinceOptions, setProvinceOptions] = useState<Array<{ label: string; value: string }>>([
+    { label: "Tất cả", value: "" },
+  ]);
+
+  // Fetch provinces for hometown select
+  useEffect(() => {
+    fetch("https://provinces.open-api.vn/api/v1/?depth=2")
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data)) {
+          const provinces = [
+            { label: "Tất cả", value: "" },
+            ...data.map((p: any) => ({
+              label: p.name,
+              value: p.name,
+            })),
+          ];
+          setProvinceOptions(provinces);
+        }
+      })
+      .catch((err) => {
+        console.log("Error fetching provinces:", err);
+        setProvinceOptions([{ label: "Tất cả", value: "" }]);
+      });
+  }, []);
 
   // BirthDay states
   const [birthDay, setBirthDay] = useState("");
@@ -189,8 +220,15 @@ export default function Overview({ userId }: OverviewProps) {
   const handleUpdateName = async (name: string) => {
     if (readOnly) return;
     try {
-      await apiChangeName({ name });
-      await apiGetInfo();
+      const res = await apiChangeName({ name });
+      if (res.success && res.profile) {
+        // Cập nhật state tên
+        setName(res.profile.name || name);
+        setNameInput(res.profile.name || name);
+
+        // Dispatch update vào redux (persist thay đổi state.profile)
+        dispatch(changeName(res.profile.name));
+      }
     } catch (err: any) {
       alert(
         "Lỗi cập nhật tên: " +
@@ -514,12 +552,21 @@ export default function Overview({ userId }: OverviewProps) {
           <div>
             <span className="text-[14px] text-white">Quê quán</span>
             <div className="flex flex-1 flex-col">
-              <input
+              <select
                 className="text-white focus:border focus:border-blue-500 w-[340px] text-[18px] bg-[#242526] border border-[#3B3D3E] rounded px-2 py-1 outline-none"
                 value={hometownInput}
-                onChange={(e) => setHometownInput(e.target.value)}
+                onChange={e => setHometownInput(e.target.value)}
                 autoFocus
-              />
+              >
+                <option value="">Chọn tỉnh/thành phố</option>
+                {provinceOptions
+                  .filter(o => o.value !== "")
+                  .map(option => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+              </select>
             </div>
             <div className="mt-2">
               <label className="text-[14px] text-white mr-2">
@@ -730,7 +777,7 @@ export default function Overview({ userId }: OverviewProps) {
         >
           <div>
             <span className="text-[14px] text-white">
-              Trường học / Công việc
+              Trường học
             </span>
             <div className="flex flex-1 flex-col">
               <input

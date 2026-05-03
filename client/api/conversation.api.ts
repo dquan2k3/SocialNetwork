@@ -132,6 +132,7 @@ export async function apiLoadListFriend() {
 export async function apiGetGroupUser(conversationId: string) {
     try {
         const res = await instance.get(`/conversation/getGroupUser/${conversationId}`);
+        console.log(res.data)
         return res.data;
     } catch (err) {
         console.error("apiGetGroupUser error:", err);
@@ -233,4 +234,99 @@ export async function apiSummaryGroupConversation(conversationId: string | numbe
     }
 }
 
+// API to load information about a group conversation
+export async function apiLoadInfoGroupConversation(conversationId: string) {
+    try {
+        const res = await instance.get(`/conversation/loadInfoGroupConversation`, {
+            params: { conversationId },
+        });
+        return res.data;
+    } catch (err) {
+        console.error("apiLoadInfoGroupConversation error:", err);
+        throw err;
+    }
+}
 
+export async function apiApplyJoinGroupConversation(conversationId: string) {
+    try {
+        const res = await instance.post(`/conversation/applyJoinGroupConversation`, { conversationId });
+        return res.data;
+    } catch (err) {
+        console.error("apiApplyJoinGroupConversation error:", err);
+        throw err;
+    }
+}
+
+export async function apiCancelJoinGroupConversation(conversationId: string) {
+    try {
+        const res = await instance.post(`/conversation/cancelApplyJoinGroupConversation`, { conversationId });
+        return res.data;
+    } catch (err) {
+        console.error("apiCancelJoinGroupConversation error:", err);
+        throw err;
+    }
+}
+
+
+export async function apiLoadGroupManager(conversationId: string) {
+    try {
+        const res = await instance.get(`/conversation/loadGroupManager`, {
+            params: { conversationId },
+        });
+        return res.data;
+    } catch (err) {
+        console.error("apiLoadGroupManager error:", err);
+        throw err;
+    }
+}
+
+export async function apiChangeNeedApproval(conversationId: string) {
+    try {
+        const res = await instance.post('/conversation/changeNeedApproval', { conversationId });
+        return res.data;
+    } catch (err) {
+        console.error("apiChangeNeedApproval error:", err);
+        throw err;
+    }
+}
+
+export async function apiKickUser(conversationId: string, userId: string) {
+    try {
+        const res = await instance.post('/conversation/kickUser', { conversationId, userId });
+        return res.data;
+    } catch (err) {
+        console.error("apiKickUser error:", err);
+        throw err;
+    }
+}
+
+export async function apiApproveUser(conversationId: string, userId: string) {
+    try {
+        const res = await instance.post('/conversation/approveUser', { conversationId, userId });
+        return res.data;
+    } catch (err) {
+        console.error("apiApproveUser error:", err);
+        throw err;
+    }
+}
+
+export async function apiDeclineUser(conversationId: string, userId: string) {
+    try {
+        const res = await instance.post('/conversation/declineUser', { conversationId, userId });
+        return res.data;
+    } catch (err) {
+        console.error("apiDeclineUser error:", err);
+        throw err;
+    }
+}
+
+export async function apiTransferOwner(conversationId: string, userId: string) {
+    try {
+        console.log("apiTransferOwner called with:", { conversationId, userId });
+        const res = await instance.post('/conversation/transferOwner', { conversationId, userId });
+        return res.data;
+    } catch (err) {
+        console.error("apiTransfer error:", err);
+        throw err;
+    }
+}

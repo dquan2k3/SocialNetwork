@@ -16,6 +16,8 @@ export const verifyToken = async (req, res, next) => {
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     if (!decoded?.id) {
+      // Xóa token nếu thiếu user id
+      res.clearCookie("token");
       return res.status(403).json({
         success: false,
         message: "Token missing user id",
@@ -29,6 +31,8 @@ export const verifyToken = async (req, res, next) => {
       if (tokenVersion !== null) {
         console.log(`[verifyToken] Redis found tokenVersion for userId=${decoded.id}: ${tokenVersion}`);
         if (tokenVersion != decoded.tokenVersion) {
+          // Xóa token ngay khi tokenVersion mismatch
+          res.clearCookie("token");
           return res.status(403).json({
             success: false,
             message: "Token version mismatch",
@@ -48,6 +52,8 @@ export const verifyToken = async (req, res, next) => {
     // If not found in redis, query DB
     const userInDb = await accountModel.findById(decoded.id).select("tokenVersion");
     if (!userInDb) {
+      // Xóa token nếu không tìm thấy user
+      res.clearCookie("token");
       return res.status(403).json({
         success: false,
         message: "User not found for token",
@@ -55,6 +61,8 @@ export const verifyToken = async (req, res, next) => {
       });
     }
     if (userInDb.tokenVersion != decoded.tokenVersion) {
+      // Xóa token ngay khi tokenVersion mismatch
+      res.clearCookie("token");
       return res.status(403).json({
         success: false,
         message: "Token version mismatch",
@@ -64,6 +72,8 @@ export const verifyToken = async (req, res, next) => {
     req.user = decoded;
     next();
   } catch (err) {
+    // Xóa token nếu token hết hạn hoặc không hợp lệ
+    res.clearCookie("token");
     return res.status(403).json({
       success: false,
       message: "Invalid or expired token",

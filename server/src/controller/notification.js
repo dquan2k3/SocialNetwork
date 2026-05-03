@@ -1,6 +1,6 @@
 const Notification = require("../model/notification");
+const { conversationModel } = require("../model/conversation");
 const { getIO } = require("../../socket");
-
 
 async function notifyReact({ userId, fromId, postId, reactType, avatar, name }) {
     if (!userId || !fromId || !postId) throw new Error("Missing required fields for notifyReact");
@@ -230,6 +230,7 @@ async function notifyFriendRequest({ userId, fromId, avatar, name }) {
 
 async function notifyRemoveFriendRequest({ userId, fromId, avatar, name }) {
     if (!userId || !fromId) throw new Error("Missing required fields for notifyRemoveFriendRequest");
+    
     if (String(userId) === String(fromId)) return null;
     const io = getIO();
     // Remove the friendRequest notification
@@ -287,6 +288,50 @@ async function notifyAcceptFriend({ userId, fromId, avatar, name }) {
     return newNotification;
 }
 
+// Hàm này chỉ gửi socket đến từng userId trong danh sách thành viên của group, KHÔNG gửi vào phòng group
+async function createGroupNotify(conversationId, groupAvatar, groupName, owner) {
+    try {
+        // Log all đầu vào và group
+        console.log('createGroupNotify called with:', {
+            conversationId,
+            groupAvatar,
+            groupName,
+            owner
+        });
+        // Tìm kiếm cuộc trò chuyện nhóm theo id
+        const group = await conversationModel.findOne({ _id: conversationId, type: "group" }).lean();
+
+        
+        console.log('Fetched group:', group);
+
+        if (!group) {
+            throw new Error("Group conversation not found");
+        }
+
+        // Lấy ra danh sách các userId thành viên
+        const memberUserIds = Array.isArray(group.members)
+            ? group.members.map(m => m.userId)
+            : [];
+
+        const io = getIO();
+
+        // Gửi trực tiếp socket đến từng userId, không gửi qua phòng group
+        for (const userId of memberUserIds) {
+            io.to(String(userId)).emit('onCreateGroup', {
+                conversationId,
+                groupAvatar,
+                groupName,
+                owner,
+            });
+        }
+
+        return true;
+    } catch (err) {
+        console.error("Error in createGroupNotify:", err.message);
+        throw err;
+    }
+}
+
 module.exports = {
     notifyReact,
     notifyComment,
@@ -296,5 +341,5 @@ module.exports = {
     notifyFriendRequest,
     notifyRemoveFriendRequest,
     notifyAcceptFriend,
+    createGroupNotify,
 };
-

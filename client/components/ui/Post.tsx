@@ -133,7 +133,7 @@ export default function Post(props: PostProps & { myId?: string; myName?: string
   const myName = user.profile?.name;
   const myUsername = user.profile?.username;
   const myId = user?.userId;
-  const myAvatar = getCloudinaryImageLink(user.bio?.avatar, user.bio?.avatarCroppedArea, 56);
+  const myAvatar = user.bio?.avatar;
   const myAvatarCroppedArea = user.bio?.avatarCroppedArea;
 
   const {

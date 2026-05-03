@@ -1,5 +1,5 @@
 function getCloudinaryImageLink(
-  url: string,
+  url: string | undefined,
   croppedArea: any,
   size: number = 190,
   options: { rounded?: boolean } = {}

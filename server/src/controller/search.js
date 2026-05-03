@@ -275,6 +275,7 @@ export const searchUser = async (req, res) => {
 };
 
 // Tìm kiếm post tối ưu: relationship chỉ giữa currentUser và owner, giảm map/loop
+// Không trả post tồn tại groupId (chỉ lấy post không có groupId)
 export const searchPost = async (req, res) => {
     try {
         let { key = '', sort, filter = {} } = req.body || {};
@@ -282,7 +283,8 @@ export const searchPost = async (req, res) => {
         let sortby = sort || filter.sortby;
         let time = (filter && typeof filter === 'object') ? filter.time : undefined;
 
-        let query = {};
+        let query = { groupId: null }; // Thêm điều kiện không có groupId (tức chỉ lấy post cá nhân/chung)
+
         if (key && key.trim() !== '') {
             query.text = { $regex: key.trim(), $options: 'i' };
         }
@@ -335,7 +337,7 @@ export const searchPost = async (req, res) => {
         // Dùng id bản thân từ req.user?.id nếu có
         const userId = req.user?.id;
 
-        // Lấy post và các user owner
+        // Lấy post và các user owner (chỉ post không có groupId)
         const posts = await postModel.find(query).sort(sortOpt).lean();
         const postIds = posts.map(p => p._id);
         const ownerUserIdsSet = new Set(posts.map(p => String(p.user)));

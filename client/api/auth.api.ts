@@ -37,3 +37,16 @@ export async function apiLogout() {
   return response.data;
 }
 
+export interface ChangePasswordPayload {
+  email: string;
+  oldPassword: string;
+  newPassword: string;
+  reNewPassword: string;
+}
+
+export async function apiChangePassword(payload: ChangePasswordPayload) {
+  const response = await instance.post("/auth/changepassword", payload);
+  return response.data;
+}
+
+

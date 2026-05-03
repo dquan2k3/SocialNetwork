@@ -33,7 +33,6 @@ export const authLogin = async (dispatch: AppDispatch, payload: LoginPayload) =>
     toast.success("Đăng nhập thành công!");
     return data;
   } catch (error: any) {
-    const msg = error.response?.data?.message || "Đăng nhập thất bại!";
     toast.error(getErrorMessage(error));
     throw error;
   }

@@ -37,6 +37,21 @@ router.post('/selfChat', verifyToken, conversationController.selfChat);
 router.get('/getSelfChat', verifyToken, conversationController.getSelfChats);
 router.post('/summaryGroupConversation', verifyToken, conversationController.summaryGroupConversation);
 
+router.get('/loadInfoGroupConversation', verifyToken, conversationController.loadInfoGroupConversation);
+router.post('/applyJoinGroupConversation', verifyToken, conversationController.applyJoinGroupConversation);
+router.post('/cancelApplyJoinGroupConversation', verifyToken, conversationController.cancelApplyJoinGroupConversation);
+
+router.get('/loadGroupManager', verifyToken, conversationController.loadGroupManager);
+router.post('/changeNeedApproval', verifyToken, conversationController.changeNeedApproval);
+router.post('/declineUser', verifyToken, conversationController.declineUser);
+router.post('/kickUser', verifyToken, conversationController.kickUser);
+router.post('/approveUser', verifyToken, conversationController.approveUser);
+router.post('/transferOwner', verifyToken, conversationController.transferOwner);
+
+
+
+
+
 
 
 

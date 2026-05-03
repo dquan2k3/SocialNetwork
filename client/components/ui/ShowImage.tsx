@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { getCloudinaryImageLink } from "@/helper/croppedImageHelper";
 
 type ImageObj = {
     file_type?: string;
@@ -34,12 +35,6 @@ function formatDate(datetime?: string | number | Date): string {
     }
 }
 
-// NOTE: getCloudinaryImageLink should be implemented or imported if used in actual app.
-// For this static copy, use avatar as-is.
-function getCloudinaryImageLink(avatar?: string, _?: any, __?: number) {
-    return avatar;
-}
-
 const ShowImage: React.FC<ShowImageProps> = ({
     images = [],
     initialIndex = 0,
@@ -50,17 +45,39 @@ const ShowImage: React.FC<ShowImageProps> = ({
     username,
     createdAt
 }) => {
-    console.log("ShowImage images:", images);
-    console.log("ShowImage initialIndex:", initialIndex);
-    console.log("ShowImage onClose:", onClose);
-    console.log("ShowImage avatar:", avatar);
-    console.log("ShowImage avatarCroppedArea:", avatarCroppedArea);
-    console.log("ShowImage name:", name);
-    console.log("ShowImage username:", username);
-    console.log("ShowImage createdAt:", createdAt);
-    const [current, setCurrent] = useState(initialIndex);
+    // Lọc ra chỉ các ảnh (không bao gồm video)
+    const imageOnlyArr = images.filter((img) => img.file_type === "image");
+    // Đảm bảo filtered array có ít nhất 1 phần tử nếu muốn hiển thị
+    if (!imageOnlyArr || imageOnlyArr.length === 0) return null;
 
-    // Ẩn scroll (overflow) khi open modal – theo mẫu ở PostingPopup.tsx (40-48)
+    // Đảm bảo initialIndex trỏ tới thứ tự ảnh, không phải theo index cũ.
+    // Nếu initialIndex truyền vào < imageOnlyArr.length thì giữ, 
+    // còn nếu truyền vào là của array gốc (hỗ trợ backward compatibility): 
+    // -> mapping về index mới nếu array gốc có video phía trước
+    // index ảnh trong images
+    let realInitialIndex = initialIndex;
+    // map sang index của imageOnlyArr nếu initialIndex là index gốc
+    if (images && images.length > 0) {
+        let count = 0;
+        for (let k = 0; k < images.length; k++) {
+            if (images[k].file_type === "image") {
+                if (k === initialIndex) {
+                    realInitialIndex = count;
+                    break;
+                }
+                count++;
+            }
+        }
+        // Nếu initialIndex là 0 hoặc không phải vị trí ảnh -> mặc định là 0
+        if (initialIndex === 0 && images[0]?.file_type !== "image") realInitialIndex = 0;
+        // Nếu index không khớp phần tử ảnh nào (ví dụ truyền 3 mà chỉ có 2 ảnh) => về 0
+        if (realInitialIndex >= imageOnlyArr.length) realInitialIndex = 0;
+    } else {
+        realInitialIndex = 0;
+    }
+
+    const [current, setCurrent] = useState(realInitialIndex);
+
     useEffect(() => {
         // Chỉ ẩn scroll khi modal ShowImage xuất hiện
         const originalOverflow = document.body.style.overflow;
@@ -70,11 +87,9 @@ const ShowImage: React.FC<ShowImageProps> = ({
         };
     }, []);
 
-    const avatar80x80 = getCloudinaryImageLink(avatar, avatarCroppedArea, 80);
+    const avatar80x80 = getCloudinaryImageLink(avatar || "", avatarCroppedArea, 80);
 
-    if (!images || images.length === 0) return null;
-
-    const singleImage = images.length === 1;
+    const singleImage = imageOnlyArr.length === 1;
 
     const getImageUrl = (imgObj?: ImageObj) => {
         if (!imgObj) return "";
@@ -84,18 +99,18 @@ const ShowImage: React.FC<ShowImageProps> = ({
     };
 
     const handlePrev = () => {
-        setCurrent((prev) => (prev === 0 ? images.length - 1 : prev - 1));
+        setCurrent((prev) => (prev === 0 ? imageOnlyArr.length - 1 : prev - 1));
     };
 
     const handleNext = () => {
-        setCurrent((prev) => (prev === images.length - 1 ? 0 : prev + 1));
+        setCurrent((prev) => (prev === imageOnlyArr.length - 1 ? 0 : prev + 1));
     };
 
     const handleClose = () => {
         if (onClose) onClose();
     };
 
-    const currentImageObj = images[current];
+    const currentImageObj = imageOnlyArr[current];
     const imgUrl = getImageUrl(currentImageObj);
 
     const formattedCreatedAt = formatDate(createdAt);
@@ -172,7 +187,7 @@ const ShowImage: React.FC<ShowImageProps> = ({
                         {/* Footer: index */}
                         {!singleImage && (
                             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-[#242627cc] px-4 py-1 rounded text-[#b0b3b8] text-sm">
-                                Ảnh {current + 1} / {images.length}
+                                Ảnh {current + 1} / {imageOnlyArr.length}
                             </div>
                         )}
                     </div>

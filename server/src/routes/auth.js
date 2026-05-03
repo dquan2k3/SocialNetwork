@@ -8,5 +8,7 @@ router.post('/login', authController.login);
 router.post('/register', authController.register);
 router.post('/logout', authController.logout);
 router.post('/checklogin', verifyToken, authController.checklogin);
+router.post('/changepassword', authController.changePassword);
+
 
 export default router;

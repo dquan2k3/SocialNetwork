@@ -22,7 +22,7 @@ export function middleware(req: NextRequest) {
 
     let decoded: any = null;
 
-    // Nếu có token, decode và log thông tin
+    // Nếu có token, decode
     if (token) {
         decoded = decodeJwt(token);
     }
@@ -35,6 +35,11 @@ export function middleware(req: NextRequest) {
         pathname.startsWith("/fonts")
     ) {
         return NextResponse.next();
+    }
+
+    // Nếu vào root ("/") thì chuyển sang "/home"
+    if (pathname === "/") {
+        return NextResponse.redirect(new URL("/home", req.url));
     }
 
     // Nếu có token và vào /auth thì redirect về /home

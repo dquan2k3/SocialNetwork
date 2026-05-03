@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
@@ -6,6 +5,7 @@ import { apiGetFriend } from "@/api/relationship.api";
 import RelationshipButton from "@/components/ui/RelationshipButton";
 import { useSelector } from "react-redux";
 import { useRouter, useSearchParams } from "next/navigation";
+import { getCloudinaryImageLink } from "@/helper/croppedImageHelper";
 
 const menuTabs = [
     { key: "friends", label: "Bạn bè" },
@@ -37,12 +37,17 @@ const tabToType: Record<TabKey, FriendType> = {
     birthdays: "birthday",
 };
 
-function getAvatarFromBio(bio: any): string {
-    return (bio && bio.avatar) ? bio.avatar : "/default-avatar.png";
+function getAvatarFromBio(bio: any): string | undefined {
+    // Sẽ trả undefined nếu không có avatar để kiểm soát fallback ở dưới
+    if (bio && typeof bio.avatar === "string" && bio.avatar.length > 0) {
+        return bio.avatar;
+    }
+    return undefined;
 }
 
+// Chỉ sử dụng avatarCroppedArea, không dùng avatarCroppedStat
 function getAvatarCroppedAreaFromBio(bio: any): any {
-    return bio && bio.avatarCroppedStat ? bio.avatarCroppedStat : undefined;
+    return bio && bio.avatarCroppedArea ? bio.avatarCroppedArea : undefined;
 }
 
 function getBirthdayFromField(f: any, tab: TabKey): string | undefined {
@@ -100,25 +105,38 @@ function getLastSeenStatus(lastSeen?: string): { status: string, color: string }
     return { status: `Hoạt động ${y} năm trước`, color: "text-gray-300" };
 }
 
+// Only use .avatarCroppedArea (not avatarCroppedStat)
 function mapServerFriendsToUserObjs(friends: any[], tab: TabKey): User[] {
-    return friends.map((f) => ({
-        id: String(f.id),
-        name: f.name,
-        username: f.username,
-        avatar: getAvatarFromBio(f.bio),
-        avatarCroppedArea: getAvatarCroppedAreaFromBio(f.bio),
-        relationship: f.relationship,
-        birthday: getBirthdayFromField(f, tab),
-        birthdayIn: tab === "birthdays" && typeof f.birthdayIn === "number" ? f.birthdayIn : undefined,
-        lastSeen: tab === "friends" && f.lastSeen ? f.lastSeen : undefined,
-        message: (tab === "received" || tab === "sent")
-            ? (
-                f.relationship && typeof f.relationship === "object" && typeof f.relationship.message === "string"
-                    ? f.relationship.message
-                    : (typeof f.message === "string" ? f.message : undefined)
-            )
-            : undefined,
-    }));
+    return friends.map((f) => {
+        const avatarUrl = getAvatarFromBio(f.bio);
+        const avatarCropped = getAvatarCroppedAreaFromBio(f.bio);
+        // Nếu avatarUrl undefined (rỗng), thì dùng default luôn ở đây
+        const fallbackDefaultAvatar = "/default-avatar.png";
+        
+        let resolvedAvatar = getCloudinaryImageLink(avatarUrl ?? "", avatarCropped, 56);
+        if (!resolvedAvatar || resolvedAvatar === "" || resolvedAvatar === "undefined" || resolvedAvatar === "null") {
+            // Trường hợp getCloudinaryImageLink trả về sai, dùng ảnh mặc định
+            resolvedAvatar = fallbackDefaultAvatar;
+        }
+        return {
+            id: String(f.id),
+            name: f.name,
+            username: f.username,
+            avatar: resolvedAvatar,
+            avatarCroppedArea: avatarCropped,
+            relationship: f.relationship,
+            birthday: getBirthdayFromField(f, tab),
+            birthdayIn: tab === "birthdays" && typeof f.birthdayIn === "number" ? f.birthdayIn : undefined,
+            lastSeen: tab === "friends" && f.lastSeen ? f.lastSeen : undefined,
+            message: (tab === "received" || tab === "sent")
+                ? (
+                    f.relationship && typeof f.relationship === "object" && typeof f.relationship.message === "string"
+                        ? f.relationship.message
+                        : (typeof f.message === "string" ? f.message : undefined)
+                )
+                : undefined,
+        };
+    });
 }
 
 function FriendsPage() {
@@ -201,6 +219,7 @@ function FriendsPage() {
             try {
                 const type = tabToType[tab];
                 const res = await apiGetFriend(type);
+                console.log(res)
                 if (!cancelled) {
                     const friendsArr = Array.isArray(res?.friends) ? res.friends : [];
                     setUsersByTab((prev) => ({
@@ -339,9 +358,15 @@ function FriendsPage() {
                                         }}
                                     >
                                         <img
-                                            src={usr.avatar}
+                                            src={usr.avatar && usr.avatar !== "undefined" && usr.avatar !== "null" && usr.avatar.trim() !== "" ? usr.avatar : "/default-avatar.png"}
                                             alt={usr.name}
                                             className="w-14 h-14 rounded-full object-cover border-2 border-[#3A3A3A] shadow-sm flex-shrink-0"
+                                            onError={(e) => {
+                                                const target = e.currentTarget as HTMLImageElement;
+                                                if (target.src !== window.location.origin + "/default-avatar.png") {
+                                                    target.src = "/default-avatar.png";
+                                                }
+                                            }}
                                         />
                                         <div className="ml-4 flex-1">
                                             <div className="font-semibold text-[1.1rem] text-white truncate">

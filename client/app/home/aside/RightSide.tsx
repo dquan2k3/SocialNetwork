@@ -225,7 +225,7 @@ const RightSide: React.FC = () => {
     return (
         <>
             <div
-                className="w-[330px] max-w-full h-[80vh] pt-6 pb-2 rounded-xl bg-[#222328] px-2 text-white shadow-md select-none"
+                className="w-[330px] max-w-full h-[80vh] pt-2 pb-2 rounded-xl bg-[#222328] px-2 text-white shadow-md select-none"
                 style={{
                     minWidth: "200px",
                     display: "flex",

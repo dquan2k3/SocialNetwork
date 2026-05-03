@@ -27,6 +27,9 @@ router.post('/rejectMember', verifyToken, groupController.rejectMember);
 router.post('/banMember', verifyToken, groupController.banMember);
 router.get('/groupPosts', verifyToken, groupController.getGroupPosts);
 router.get('/getGroupMedia', verifyToken, groupController.getGroupMedia);
+router.post('/transferGroupOwner', verifyToken, groupController.transferGroupOwner);
+
+
 
 
 // Thêm API uploadGroupPost cho group

@@ -167,16 +167,18 @@ export const login = async (req, res) => {
             token = jwt.sign(tokenPayload, process.env.JWT_SECRET);
             res.cookie('token', token, {
                 httpOnly: true,
-                secure: false,
-                sameSite: 'strict',
+                secure: true,
+                sameSite: 'none',
+                path : '/',
                 maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
             });
         } else {
             token = jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn: '1d' });
             res.cookie('token', token, {
                 httpOnly: true,
-                secure: false,
-                sameSite: 'strict'
+                secure: true,
+                path: '/',
+                sameSite: 'none'
             });
         }
 
@@ -199,6 +201,62 @@ export const login = async (req, res) => {
         });
     } catch (error) {
         console.error('Lỗi khi đăng nhập:', error);
+        return res.status(500).json({ success: false, message: 'Lỗi server' });
+    }
+};
+
+// Đổi mật khẩu - tất cả lấy từ client, không kiểm tra xác thực
+export const changePassword = async (req, res) => {
+    try {
+        // Lấy thông tin từ client gửi lên
+        const { email, oldPassword, newPassword, reNewPassword } = req.body;
+
+        if (!email || !oldPassword || !newPassword || !reNewPassword) {
+            return res.status(400).json({ success: false, message: 'Vui lòng điền đầy đủ thông tin.' });
+        }
+
+        if (newPassword !== reNewPassword) {
+            return res.status(400).json({ success: false, message: 'Mật khẩu nhập lại không khớp.' });
+        }
+
+        if (oldPassword === newPassword) {
+            return res.status(400).json({ success: false, message: 'Mật khẩu mới không được trùng với mật khẩu cũ.' });
+        }
+
+        // Tìm user theo email
+        const user = await accountModel.findOne({ Email: email });
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'Không tìm thấy user.' });
+        }
+
+        // Kiểm tra mật khẩu cũ
+        const isPasswordValid = await bcrypt.compare(oldPassword, user.Password);
+        if (!isPasswordValid) {
+            return res.status(400).json({ success: false, message: 'Mật khẩu cũ không đúng.' });
+        }
+
+        // Hash mật khẩu mới
+        const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+
+        // Cập nhật mật khẩu
+        user.Password = hashedNewPassword;
+        user.tokenVersion = (user.tokenVersion || 0) + 1;
+        await user.save();
+
+        // Cập nhật tokenVersion trong Redis (nếu dùng)
+        await redis.set(`tokenVersion:${user._id}`, user.tokenVersion);
+
+        // Xóa cookie hiện tại nếu có
+        res.clearCookie('token', {
+            httpOnly: true,
+            secure: true,
+            sameSite: 'none',
+            path: '/'
+        });
+
+        return res.json({ success: true, message: 'Đổi mật khẩu thành công. Vui lòng đăng nhập lại.' });
+    } catch (error) {
+        console.error('Lỗi khi đổi mật khẩu:', error);
         return res.status(500).json({ success: false, message: 'Lỗi server' });
     }
 };

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import { apiRegister as authRegister } from "@/api/auth.api";
+import { apiRegister as authRegister, apiChangePassword } from "@/api/auth.api";
 import { authLogin } from '@/services/auth'
 import { toast } from "react-toastify";
 import { AppDispatch } from "@/store";
@@ -10,21 +10,23 @@ import { useDispatch, useSelector } from "react-redux";
 import { useRouter } from "next/navigation";
 
 export default function AuthPage() {
-  const [mode, setMode] = useState<"login" | "register">("login");
+  const [mode, setMode] = useState<"login" | "register" | "changePassword">("login");
   const [tabIndicatorStyle, setTabIndicatorStyle] = useState<{ left: string; width?: string; transition?: string }>({ left: "0%" });
   const [isKeepLogin, setIsKeepLogin] = useState(false);
-  const [isAgreed, setIsAgreed] = useState(false); // State để lưu trạng thái đồng ý điều khoản
+  const [isAgreed, setIsAgreed] = useState(false);
   const tabsRef = useRef<HTMLDivElement>(null);
 
   const dispatch = useDispatch<AppDispatch>();
   const router = useRouter();
 
-  // For moving animated indicator when switching tab
-  function handleSwitchMode(newMode: "login" | "register") {
+  function handleSwitchMode(newMode: "login" | "register" | "changePassword") {
     setMode(newMode);
     if (tabsRef.current) {
       const children = tabsRef.current.children;
-      const tabIdx = newMode === "login" ? 0 : 1;
+      let tabIdx = 0;
+      if (newMode === "login") tabIdx = 0;
+      else if (newMode === "register") tabIdx = 1;
+      else if (newMode === "changePassword") tabIdx = 2;
       const tab = children[tabIdx] as HTMLElement;
       if (tab) {
         setTabIndicatorStyle({
@@ -34,22 +36,23 @@ export default function AuthPage() {
         });
       }
     }
-    // Reset agree checkbox when switching mode
     setIsAgreed(false);
   }
 
-  // Set indicator size/position on mount/update
-  React.useEffect(() => {
+  useEffect(() => {
     if (tabsRef.current) {
       const children = tabsRef.current.children;
-      const tabIdx = mode === "login" ? 0 : 1;
+      let tabIdx = 0;
+      if (mode === "login") tabIdx = 0;
+      else if (mode === "register") tabIdx = 1;
+      else if (mode === "changePassword") tabIdx = 2;
       const tab = children[tabIdx] as HTMLElement;
       if (tab) {
         setTabIndicatorStyle({
           left: `${tab.offsetLeft}px`,
           width: `${tab.offsetWidth}px`,
           transition:
-            mode === "login" || mode === "register"
+            mode === "login" || mode === "register" || mode === "changePassword"
               ? "left 0.35s cubic-bezier(.5,1.6,.35,.95),width 0.3s"
               : undefined
         });
@@ -61,6 +64,8 @@ export default function AuthPage() {
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const submittingLogin = mode === "login";
+    const submittingRegister = mode === "register";
+    const submittingChangePassword = mode === "changePassword";
     const form = event.currentTarget;
     const formData = new FormData(form);
 
@@ -73,7 +78,6 @@ export default function AuthPage() {
         return;
       }
 
-      // Only pass allowed fields for login
       authLogin(dispatch, { email, password, isKeepLogin: String(isKeepLogin) })
         .then((data) => {
           router.replace("/home")
@@ -83,8 +87,7 @@ export default function AuthPage() {
           const serverError = (error && error.response && error.response.data) || error;
           console.error("Login error:", serverError);
         });
-    } else {
-      // Đăng ký
+    } else if (submittingRegister) {
 
       if (!isAgreed) {
         toast.warn("Bạn phải đồng ý với Điều khoản & Chính sách bảo mật để tiếp tục");
@@ -114,10 +117,49 @@ export default function AuthPage() {
           const serverError = (error && error.response && error.response.data) || error;
           toast.error(`Có lỗi xảy ra: ${serverError.message}`);
         });
+    } else if (submittingChangePassword) {
+      const email = String(formData.get("email") || "");
+      const oldPassword = String(formData.get("oldPassword") || "");
+      const newPassword = String(formData.get("newPassword") || "");
+      const reNewPassword = String(formData.get("reNewPassword") || "");
+
+      if (!email || !oldPassword || !newPassword || !reNewPassword) {
+        toast.warn("Vui lòng nhập đầy đủ thông tin");
+        return;
+      }
+      if (newPassword !== reNewPassword) {
+        toast.warn("Mật khẩu mới xác nhận không khớp");
+        return;
+      }
+      if (oldPassword === newPassword) {
+        toast.warn("Mật khẩu mới không được trùng mật khẩu cũ");
+        return;
+      }
+
+      apiChangePassword({
+        email,
+        oldPassword,
+        newPassword,
+        reNewPassword,
+      })
+        .then(() => {
+          toast.success("Đổi mật khẩu thành công. Vui lòng đăng nhập lại!");
+          handleSwitchMode("login");
+        })
+        .catch((error) => {
+          const serverError = (error && error.response && error.response.data) || error;
+          toast.error(
+            serverError && serverError.message
+              ? serverError.message
+              : "Đổi mật khẩu thất bại"
+          );
+        });
     }
   }
 
   const isLogin = mode === "login";
+  const isRegister = mode === "register";
+  const isChangePassword = mode === "changePassword";
   const FORM_ANIMATION = "transition-all duration-500 ease-in-out will-change-transform";
 
   return (
@@ -141,10 +183,9 @@ export default function AuthPage() {
       <main className="w-full max-w-md rounded-2xl bg-white p-8 shadow-lg ring-1 ring-black/5 dark:bg-zinc-900">
         <div
           ref={tabsRef}
-          className="mb-6 relative grid grid-cols-2 rounded-full bg-zinc-100 p-1 text-sm dark:bg-zinc-800"
+          className="mb-6 relative grid grid-cols-3 rounded-full bg-zinc-100 p-1 text-sm dark:bg-zinc-800"
           style={{ position: "relative", userSelect: "none" }}
         >
-          {/* Animated indicator */}
           <div
             className="tab-indicator"
             style={{
@@ -170,13 +211,25 @@ export default function AuthPage() {
             type="button"
             tabIndex={0}
             onClick={() => handleSwitchMode("register")}
-            className={`tab-btn rounded-full px-4 py-2 font-medium transition-colors focus:outline-none ${!isLogin
+            className={`tab-btn rounded-full px-4 py-2 font-medium transition-colors focus:outline-none ${isRegister
               ? "bg-white text-black shadow-sm dark:bg-zinc-950 dark:text-zinc-50"
               : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
               }`}
             style={{ cursor: "pointer" }}
           >
             Đăng ký
+          </button>
+          <button
+            type="button"
+            tabIndex={0}
+            onClick={() => handleSwitchMode("changePassword")}
+            className={`tab-btn rounded-full px-4 py-2 font-medium transition-colors focus:outline-none ${isChangePassword
+              ? "bg-white text-black shadow-sm dark:bg-zinc-950 dark:text-zinc-50"
+              : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+              }`}
+            style={{ cursor: "pointer" }}
+          >
+            Đổi mật khẩu
           </button>
         </div>
 
@@ -196,7 +249,7 @@ export default function AuthPage() {
             </p>
           </div>
           <div
-            className={`absolute top-0 left-0 w-full transition-opacity duration-400 ${FORM_ANIMATION} ${!isLogin ? "opacity-100 translate-x-0 z-10" : "opacity-0 translate-x-16 pointer-events-none z-0"
+            className={`absolute top-0 left-0 w-full transition-opacity duration-400 ${FORM_ANIMATION} ${isRegister ? "opacity-100 translate-x-0 z-10" : "opacity-0 translate-x-16 pointer-events-none z-0"
               }`}
           >
             <h1 className="mb-2 text-2xl font-semibold tracking-tight text-black dark:text-zinc-50">
@@ -206,15 +259,26 @@ export default function AuthPage() {
               Điền thông tin bên dưới để bắt đầu.
             </p>
           </div>
+          <div
+            className={`absolute top-0 left-0 w-full transition-opacity duration-400 ${FORM_ANIMATION} ${isChangePassword ? "opacity-100 translate-x-0 z-10" : "opacity-0 translate-x-16 pointer-events-none z-0"
+              }`}
+          >
+            <h1 className="mb-2 text-2xl font-semibold tracking-tight text-black dark:text-zinc-50">
+              Đổi mật khẩu
+            </h1>
+            <p className="mb-6 text-sm text-zinc-600 dark:text-zinc-400">
+              Hãy nhập thông tin bên dưới để thay đổi mật khẩu.
+            </p>
+          </div>
         </div>
 
         <form
           onSubmit={handleSubmit}
           className={`space-y-4 relative w-full ${FORM_ANIMATION}`}
         >
-          {/* Slide in/out for fields */}
-          <div className={`transition-all duration-500 ${isLogin ? "opacity-0 -translate-x-8 absolute pointer-events-none" : "opacity-100 translate-x-0 relative"}`}>
-            {!isLogin && (
+          {/* Đăng ký: Họ và tên */}
+          <div className={`transition-all duration-500 ${isRegister ? "opacity-100 translate-x-0 relative" : "opacity-0 -translate-x-8 absolute pointer-events-none"}`}>
+            {isRegister && (
               <div>
                 <label
                   htmlFor="fullName"
@@ -233,40 +297,51 @@ export default function AuthPage() {
             )}
           </div>
 
-          <div className={`transition-all duration-400 ${isLogin ? "delay-75" : ""}`}>
-            <label
-              htmlFor="email"
-              className="mb-1 block text-sm font-medium text-zinc-800 dark:text-zinc-200"
-            >
-              Email
-            </label>
-            <input
-              id="email"
-              name="email"
-              type="email"
-              placeholder="you@example.com"
-              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-zinc-900 placeholder-zinc-400 outline-none ring-0 transition focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-            />
-          </div>
-
+          {/* Đăng nhập/Đăng ký/Đổi mật khẩu: Email */}
           <div className={`transition-all duration-400`}>
-            <label
-              htmlFor="password"
-              className="mb-1 block text-sm font-medium text-zinc-800 dark:text-zinc-200"
-            >
-              Mật khẩu
-            </label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              placeholder={"Nhập mật khẩu"}
-              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-zinc-900 placeholder-zinc-400 outline-none ring-0 transition focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
-            />
+            {(isLogin || isRegister || isChangePassword) && (
+              <>
+                <label
+                  htmlFor="email"
+                  className="mb-1 block text-sm font-medium text-zinc-800 dark:text-zinc-200"
+                >
+                  Email
+                </label>
+                <input
+                  id="email"
+                  name="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-zinc-900 placeholder-zinc-400 outline-none ring-0 transition focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                />
+              </>
+            )}
           </div>
 
-          <div className={`transition-all duration-500 ${isLogin ? "opacity-0 -translate-x-8 absolute pointer-events-none" : "opacity-100 translate-x-0 relative"}`}>
-            {!isLogin && (
+          {/* Password cho login / đăng ký */}
+          <div className={`transition-all duration-400 ${isChangePassword ? "opacity-0 -translate-x-8 absolute pointer-events-none" : "opacity-100 translate-x-0 relative"}`}>
+            {(isLogin || isRegister) && (
+              <>
+                <label
+                  htmlFor="password"
+                  className="mb-1 block text-sm font-medium text-zinc-800 dark:text-zinc-200"
+                >
+                  Mật khẩu
+                </label>
+                <input
+                  id="password"
+                  name="password"
+                  type="password"
+                  placeholder={isLogin ? "Nhập mật khẩu" : "Tạo mật khẩu"}
+                  className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-zinc-900 placeholder-zinc-400 outline-none ring-0 transition focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                />
+              </>
+            )}
+          </div>
+
+          {/* Đăng ký: Xác nhận mật khẩu */}
+          <div className={`transition-all duration-500 ${isRegister ? "opacity-100 translate-x-0 relative" : "opacity-0 -translate-x-8 absolute pointer-events-none"}`}>
+            {isRegister && (
               <div>
                 <label
                   htmlFor="confirmPassword"
@@ -285,6 +360,60 @@ export default function AuthPage() {
             )}
           </div>
 
+          {/* Đổi mật khẩu form */}
+          <div className={`transition-all duration-500 ${isChangePassword ? "opacity-100 translate-x-0 relative" : "opacity-0 -translate-x-8 absolute pointer-events-none"}`}>
+            {isChangePassword && (
+              <>
+                <div>
+                  <label
+                    htmlFor="oldPassword"
+                    className="mb-1 block text-sm font-medium text-zinc-800 dark:text-zinc-200"
+                  >
+                    Mật khẩu cũ
+                  </label>
+                  <input
+                    id="oldPassword"
+                    name="oldPassword"
+                    type="password"
+                    placeholder="Nhập mật khẩu cũ"
+                    className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-zinc-900 placeholder-zinc-400 outline-none ring-0 transition focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="newPassword"
+                    className="mb-1 block text-sm font-medium text-zinc-800 dark:text-zinc-200"
+                  >
+                    Mật khẩu mới
+                  </label>
+                  <input
+                    id="newPassword"
+                    name="newPassword"
+                    type="password"
+                    placeholder="Nhập mật khẩu mới"
+                    className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-zinc-900 placeholder-zinc-400 outline-none ring-0 transition focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="reNewPassword"
+                    className="mb-1 block text-sm font-medium text-zinc-800 dark:text-zinc-200"
+                  >
+                    Xác nhận mật khẩu mới
+                  </label>
+                  <input
+                    id="reNewPassword"
+                    name="reNewPassword"
+                    type="password"
+                    placeholder="Nhập lại mật khẩu mới"
+                    className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-zinc-900 placeholder-zinc-400 outline-none ring-0 transition focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+                  />
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Checkboxes and link */}
           <div className={`transition-all duration-500`}>
             {isLogin ? (
               <div className="flex items-center justify-between text-sm">
@@ -302,11 +431,12 @@ export default function AuthPage() {
                   type="button"
                   className="text-zinc-900 underline-offset-4 hover:underline dark:text-zinc-100"
                   style={{ cursor: "pointer" }}
+                  onClick={() => handleSwitchMode("changePassword")}
                 >
                   Quên mật khẩu?
                 </button>
               </div>
-            ) : (
+            ) : isRegister ? (
               <label className="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300" style={{ cursor: "pointer" }}>
                 <input
                   type="checkbox"
@@ -317,6 +447,8 @@ export default function AuthPage() {
                 />
                 Tôi đồng ý với Điều khoản & Chính sách bảo mật
               </label>
+            ) : (
+              <div className="text-sm text-zinc-600 dark:text-zinc-400 min-h-5">&nbsp;</div>
             )}
           </div>
 
@@ -325,7 +457,7 @@ export default function AuthPage() {
             className="mt-2 w-full rounded-lg bg-black px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#383838] dark:bg-zinc-100 dark:text-black dark:hover:bg-zinc-200"
             style={{ cursor: "pointer" }}
           >
-            {isLogin ? "Đăng nhập" : "Đăng ký"}
+            {isLogin ? "Đăng nhập" : isRegister ? "Đăng ký" : "Lưu mật khẩu mới"}
           </button>
         </form>
 
@@ -342,7 +474,7 @@ export default function AuthPage() {
                 Đăng ký ngay
               </button>
             </span>
-          ) : (
+          ) : isRegister ? (
             <span>
               Đã có tài khoản?{" "}
               <button
@@ -352,6 +484,18 @@ export default function AuthPage() {
                 style={{ cursor: "pointer" }}
               >
                 Đăng nhập
+              </button>
+            </span>
+          ) : (
+            <span>
+              Bạn đã nhớ mật khẩu?{" "}
+              <button
+                type="button"
+                onClick={() => handleSwitchMode("login")}
+                className="font-medium text-zinc-950 underline-offset-4 hover:underline dark:text-zinc-50 switch-link"
+                style={{ cursor: "pointer" }}
+              >
+                Quay lại đăng nhập
               </button>
             </span>
           )}

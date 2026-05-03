@@ -5,6 +5,17 @@ import { getCloudinaryImageLink } from "@/helper/croppedImageHelper";
 import Cropper from "react-easy-crop";
 import { apiCreateGroupConversation, apiLoadListFriend } from "@/api/conversation.api";
 
+// New: Accept onGroupCreated prop
+interface CreateGroupButtonProps {
+  onGroupCreated?: (group: {
+    conversationId: string;
+    groupAvatar: string | null;
+    groupName: string;
+    owner: string;
+    requireApproval: boolean;
+  }) => void;
+}
+
 interface CroppedAreaPixels {
   width: number;
   height: number;
@@ -57,7 +68,7 @@ const getCroppedImg = async (
   });
 };
 
-const CreateGroupButton: React.FC = () => {
+const CreateGroupButton: React.FC<CreateGroupButtonProps> = ({ onGroupCreated }) => {
   const [open, setOpen] = useState(false);
 
   // Group data state
@@ -202,7 +213,7 @@ const CreateGroupButton: React.FC = () => {
     setOpen(false);
   };
 
-  // Modified: Handle confirm with loading effect
+  // Modified: Handle confirm with loading effect and call onGroupCreated
   const handleConfirm = () => {
     if (isCreatingGroup) return;
     setIsCreatingGroup(true);
@@ -214,7 +225,19 @@ const CreateGroupButton: React.FC = () => {
     })
       .then((data) => {
         setIsCreatingGroup(false);
-        console.log("Group created successfully:", data);
+
+        // Call onGroupCreated if provided
+        if (onGroupCreated && data && data.conversationId) {
+          onGroupCreated({
+            conversationId: data.conversationId,
+            groupAvatar: data.groupAvatar ?? null,
+            groupName: data.groupName ?? groupName,
+            owner: data.owner ?? "",
+            requireApproval: typeof data.requireApproval === "boolean" ? data.requireApproval : requireApproval
+          });
+        }
+
+        handleClose();
       })
       .catch((error) => {
         setIsCreatingGroup(false);

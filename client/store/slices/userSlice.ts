@@ -64,8 +64,13 @@ const userSlice = createSlice({
     removeUserId: (state) => {
       state.userId = null;
     },
+    changeName: (state, action: PayloadAction<string>) => {
+      if (state.profile) {
+        state.profile.name = action.payload;
+      }
+    },
   }
 });
 
-export const { addBio, removeBio, addProfile, removeProfile, setUserId, removeUserId } = userSlice.actions;
+export const { addBio, removeBio, addProfile, removeProfile, setUserId, removeUserId, changeName } = userSlice.actions;
 export default userSlice.reducer;

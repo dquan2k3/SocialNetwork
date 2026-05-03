@@ -22,9 +22,7 @@ import {
     faFaceAngry,
     faShare,
     faComment,
-    faUsers,
-    faPhone,
-    faPhoneAlt
+    faUsers
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
@@ -110,7 +108,6 @@ function Dropdown({
                 left: "auto",
                 top: "4rem",
                 marginTop: 0,
-                zIndex: 2000,
             }}
             className="absolute bg-white dark:bg-zinc-900 shadow-xl rounded-xl z-200 p-2 border border-zinc-100 dark:border-zinc-800"
         >
@@ -451,7 +448,7 @@ function convertApiNotification(n: any): ExtendedReactNotification {
                     }
                 </span>
             </span>
-            ;
+        ;
         const displayTime = createdAt ? getTimeAgoVN(createdAt) : "vừa xong";
         return {
             id: "react__" + id,
@@ -480,7 +477,7 @@ function convertApiNotification(n: any): ExtendedReactNotification {
                     &nbsp;đã bình luận bài viết của bạn
                 </span>
             </span>
-            ;
+        ;
         const displayTime = createdAt ? getTimeAgoVN(createdAt) : "vừa xong";
         return {
             id: "comment__" + commentId,
@@ -508,7 +505,7 @@ function convertApiNotification(n: any): ExtendedReactNotification {
                     &nbsp;đã chia sẻ bài viết của bạn
                 </span>
             </span>
-            ;
+        ;
         const displayTime = createdAt ? getTimeAgoVN(createdAt) : "vừa xong";
         return {
             id: "share__" + shareId,
@@ -573,43 +570,6 @@ function GroupAvatar({ avatar, groupName, size = 56 }: { avatar?: string, groupN
     );
 }
 
-// Incoming Call Popup component
-function IncomingCallPopup({ open, caller, onAccept, onReject }: { open: boolean, caller: { id: string, name?: string, avatar?: string } | null, onAccept: () => void, onReject: () => void }) {
-    if (!open || !caller) return null;
-    return (
-        <div className="fixed left-0 top-0 w-screen h-screen z-[10000] flex items-center justify-center" style={{ background: "rgba(30,30,40,0.55)" }}>
-            <div className="bg-white dark:bg-zinc-900 rounded-xl shadow-2xl flex flex-col items-center p-6 min-w-[320px]" style={{ zIndex: 10001 }}>
-                <img
-                    src={
-                        caller.avatar ||
-                        `https://ui-avatars.com/api/?name=${encodeURIComponent(caller?.name || caller.id || "Người gọi")}&background=random&size=96`
-                    }
-                    alt="Avatar người gọi"
-                    className="rounded-full w-20 h-20 border object-cover mb-2"
-                />
-                <div className="font-bold text-lg mb-2 text-center">
-                    {caller.name || `Người gọi ${caller.id}`}
-                </div>
-                <div className="mb-6 text-zinc-600 dark:text-zinc-300">Đang gọi đến bạn...</div>
-                <div className="flex gap-6">
-                    <button
-                        className="bg-blue-600 cursor-pointer hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-full flex items-center gap-2 transition"
-                        onClick={onAccept}
-                    >
-                        <FontAwesomeIcon icon={faPhoneAlt} /> Chấp nhận
-                    </button>
-                    <button
-                        className="bg-zinc-200 hover:bg-zinc-300 text-zinc-700 font-bold py-2 px-6 rounded-full flex items-center gap-2 transition"
-                        onClick={onReject}
-                    >
-                        <span className="text-red-500 font-bold cursor-pointer">Từ chối</span>
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-}
-
 function Header() {
     const pathname = usePathname();
     const router = useRouter();
@@ -628,20 +588,28 @@ function Header() {
     }, [user]);
 
     const [notifications, setNotifications] = useState<ExtendedReactNotification[]>([]);
+    // Fetch notification list from API on mount, and add them to notifications (prepend to array)
     useEffect(() => {
         (async () => {
             try {
                 const res = await apiGetNotifyList();
+                // Show on console as before
                 console.log("apiGetNotifyList result:", res);
+
+                // Convert result (assume res.notification is an array as in prompt)
                 if (res && Array.isArray(res.notification)) {
+                    // Map api notifications into ExtendedReactNotification type and merge with any current notifications (prevent duplicate IDs per style below)
                     setNotifications(prev => {
+                        // Convert and merge (don't re-add if in prev, based on .id and type)
                         const mapped: ExtendedReactNotification[] = [];
                         for (const apiN of res.notification) {
                             const one: ExtendedReactNotification = convertApiNotification(apiN);
+                            // Only add if not present in prev (by id), same as the websocket logic
                             if (!prev.some(p => String(p.id) === String(one.id))) {
                                 mapped.push(one);
                             }
                         }
+                        // Show newest from server on top
                         return [...mapped, ...prev];
                     });
                 }
@@ -672,10 +640,6 @@ function Header() {
     const [showPost, setShowPost] = useState(false);
     const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
 
-    // Incoming call popup state
-    const [incomingCall, setIncomingCall] = useState<null | { id: string, name?: string, avatar?: string }>(null);
-    const [showCallPopup, setShowCallPopup] = useState(false);
-
     const handleClosePost = () => {
         setShowPost(false);
         setSelectedPostId(null);
@@ -685,33 +649,10 @@ function Header() {
     const chatUserId = user?.userId || "";
     const chatName = user?.profile?.name || user?.username || "Người dùng";
 
-    // Lấy các hàm acceptCall và declineCall từ useChatSocket
-    const {
-        listenNotification,
-        listenCreateGroup,
-        listenDisbandGroup,
-        joinRoom,
-        leaveRoom,
-        listenCallOffer,
-        acceptCall,
-        declineCall
-    } = useChatSocket(chatUserId, chatName);
+    const { listenNotification, listenCreateGroup, listenDisbandGroup, joinRoom, leaveRoom } = useChatSocket(chatUserId, chatName);
 
     const messageListMapRef = useRef<Map<string, any>>(new Map());
     const [userMap, setUserMap] = useState<{ [userId: string]: { name?: string; avatar?: string } }>({});
-
-    useEffect(() => {
-        if (!listenCallOffer) return;
-        const off = listenCallOffer((callData: any) => {
-            setIncomingCall({
-                id: callData?.fromUserId,
-                name: callData?.fromName,
-                avatar: callData?.fromAvatar
-            });
-            setShowCallPopup(true);
-        });
-        return () => { typeof off === "function" && off(); };
-    }, [listenCallOffer]);
 
     function conversationItemToMsg(item: any, userId: string) {
         const latestMsg = item.latestMessage;
@@ -836,8 +777,11 @@ function Header() {
 
     useEffect(() => {
         const off = listenCreateGroup((data: any) => {
+            // When a new group is created and pushed via socket, add to message list if not present
+            console.log(data)
             if (!data?.conversationId) return;
 
+            // Join the conversation room for real-time updates
             if (typeof joinRoom === "function") {
                 joinRoom(data.conversationId);
             }
@@ -850,15 +794,18 @@ function Header() {
                 groupAvatar: data.groupAvatar,
                 createdAt: data.createdAt || new Date().toISOString(),
                 owner: data.owner,
-                latestMessage: null
+                latestMessage: null // new group, no latest message
             };
 
+            // Prevent duplication if this group already in list
             setMessages(prev => {
                 if (prev.some(msg => msg.conversationId === data.conversationId)) return prev;
                 const groupMsg = conversationItemToMsg(groupItem, userId);
+                // Put new group at top under self chat
                 return [groupMsg, ...prev];
             });
 
+            // Also update messageListMapRef to keep in sync for sockets
             messageListMapRef.current.set(
                 String(data.conversationId),
                 groupItem
@@ -870,14 +817,19 @@ function Header() {
         };
     }, [listenCreateGroup, joinRoom, userId]);
 
+    // --------- Listen Leave Group event and remove group in message list and leaveRoom ---------
     useEffect(() => {
         if (typeof listenDisbandGroup !== "function") return;
         const off = listenDisbandGroup((data: any) => {
+            // Assumes data contains the groupId or conversationId to leave
+            // Remove the group from messageList (and ref)
             const leaveGroupId = String(data?.conversationId || data?.groupId || "");
             if (!leaveGroupId) return;
 
+            // Remove from messages state
             setMessages(prev => prev.filter(msg => String(msg.conversationId) !== leaveGroupId));
 
+            // Remove from ref map
             if (messageListMapRef.current && messageListMapRef.current.has(leaveGroupId)) {
                 messageListMapRef.current.delete(leaveGroupId);
             }
@@ -891,6 +843,7 @@ function Header() {
         };
     }, [listenDisbandGroup, leaveRoom]);
 
+    // Sửa lỗi thông báo friendRequest không hiển thị khi action: "new" và chưa từng nhận trước đó
     useEffect(() => {
         const off = listenNotification({
             onMessageNotification: async (data: any) => {
@@ -932,11 +885,13 @@ function Header() {
                 setMessages(mappedMessages);
             },
             onNotification: async (data: any) => {
-                // ...code thông báo cũ giữ nguyên...
+                // Keep all notification socket logic unchanged
+                // ... (keep old code, do not touch for onNotification)
+                // ----v-----
                 console.log(data)
                 let notification = data?.notification || data || {};
                 let notiType = notification.type || data.type;
-                let id = notification._id || data._id || "";
+                let id = notification._id || data._id || ""; // always must have an id
                 if (!id) id = Math.random().toString(36);
                 let action = data.action || notification.action || "new";
                 let reactType = notification.reactType || data.reactType || "like";
@@ -1082,7 +1037,7 @@ function Header() {
                                     }
                                 </span>
                             </span>
-                            ;
+                        ;
                         const displayTime = createdAt ? getTimeAgoVN(createdAt) : "vừa xong";
                         const newNotif: ExtendedReactNotification = {
                             id: "react__" + id,
@@ -1137,7 +1092,7 @@ function Header() {
                                     &nbsp;đã bình luận bài viết của bạn
                                 </span>
                             </span>
-                            ;
+                        ;
                         const displayTime = createdAt ? getTimeAgoVN(createdAt) : "vừa xong";
                         const newNotif: ExtendedReactNotification = {
                             id: "comment__" + commentId,
@@ -1180,7 +1135,7 @@ function Header() {
                                     &nbsp;đã chia sẻ bài viết của bạn
                                 </span>
                             </span>
-                            ;
+                        ;
                         const displayTime = createdAt ? getTimeAgoVN(createdAt) : "vừa xong";
                         const newNotif: ExtendedReactNotification = {
                             id: "share__" + shareId,
@@ -1275,6 +1230,7 @@ function Header() {
         setSearchHasFocus(false);
     };
 
+
     const handleGroupCreated = useCallback((group: any) => {
         if (!group?.conversationId) return;
 
@@ -1282,6 +1238,7 @@ function Header() {
             joinRoom(group.conversationId);
         }
 
+        // Compose group-like object for conversationItemToMsg
         const groupItem = {
             ...group,
             type: "group",
@@ -1290,14 +1247,17 @@ function Header() {
             groupAvatar: group.groupAvatar,
             createdAt: group.createdAt || new Date().toISOString(),
             owner: group.owner,
-            latestMessage: null
+            latestMessage: null // new group, no latest message
         };
 
+        // Prevent duplication if this group already in list
         setMessages(prev => {
             if (prev.some(msg => msg.conversationId === group.conversationId)) return prev;
             const groupMsg = conversationItemToMsg(groupItem, userId);
+            // Put new group at top under self chat
             return [groupMsg, ...prev];
         });
+        // Also update messageListMapRef to keep in sync for sockets
         messageListMapRef.current.set(
             String(group.conversationId),
             groupItem
@@ -1368,6 +1328,8 @@ function Header() {
         );
     }
 
+    // --- Modified: show my/self chat always at top of list ---
+    // Helper: SelfChatRow
     const SelfChatRow = () => (
         <li
             key="self-chat-row"
@@ -1414,38 +1376,14 @@ function Header() {
                     <span className="text-sm truncate text-zinc-400 dark:text-zinc-500" style={{ lineHeight: "1.2" }}>
                         Ghi chú cá nhân
                     </span>
+                    {/* Optionally, own chat does not show time field */}
                 </div>
             </div>
         </li>
     );
 
-    // Accept/Reject incoming call (sửa để gọi 2 hàm acceptCall, declineCall từ useChatSocket)
-    const handleAcceptCall = () => {
-        if (incomingCall && incomingCall.id) {
-            acceptCall(incomingCall.id);
-            router.push(`/callroom?idc=${incomingCall.id}`);
-        }
-        setShowCallPopup(false);
-        setIncomingCall(null);
-    };
-    const handleRejectCall = () => {
-        if (incomingCall && incomingCall.id) {
-            declineCall(incomingCall.id);
-        }
-        setShowCallPopup(false);
-        setIncomingCall(null);
-    };
-
     return (
         <>
-            {/* Show incoming call popup */}
-            <IncomingCallPopup
-                open={showCallPopup}
-                caller={incomingCall}
-                onAccept={handleAcceptCall}
-                onReject={handleRejectCall}
-            />
-
             {/* ShowPostById when showPost=true and selectedPostId */}
             <ShowPostById
                 postId={selectedPostId}
@@ -1548,6 +1486,7 @@ function Header() {
                             </div>
                         </div>
 
+                        {/* Center: Menu - Chỉ hiển thị trên header khi >=900px, nếu nhỏ hơn 900px sẽ render ở dòng dưới */}
                         {!isBelow900 && <HeaderMenuCenter />}
 
                         {/* Right: Actions */}
@@ -1589,6 +1528,7 @@ function Header() {
                                                 key={n.id}
                                                 className="py-2 px-2 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer flex gap-2 items-center"
                                                 onClick={() => {
+                                                    // Xử lý click vào thông báo lời mời kết bạn
                                                     if (n.type === "friendRequest" && n.from) {
                                                         router.push("/friends?key=received");
                                                         setOpenNotif(false);
@@ -1605,6 +1545,7 @@ function Header() {
                                                     }
                                                 }}
                                             >
+                                                {/* Avatar luôn nằm bên trái, name từ res */}
                                                 <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
                                                     {n.avatar && (
                                                         <img
@@ -1664,7 +1605,7 @@ function Header() {
                                 </button>
                                 <Dropdown open={openMsg} setOpen={setOpenMsg}>
                                     <div
-                                        className="flex items-center justify-between mb-2 z-2000 text-zinc-900 dark:text-zinc-100"
+                                        className="flex items-center justify-between mb-2 z-200 text-zinc-900 dark:text-zinc-100"
                                         style={{
                                             minWidth: "340px",
                                         }}
@@ -1713,7 +1654,7 @@ function Header() {
                                                         username: m.username,
                                                         avatar: m.avatar,
                                                         groupName: m.groupName,
-                                                        owner: m.owner,
+                                                        owner: m.owner, // pass owner if present (group)
                                                     };
                                                     handleMessageClick(msgInfo);
                                                 }}

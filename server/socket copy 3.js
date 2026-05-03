@@ -3,6 +3,7 @@ const redis = require("./src/config/redis");
 const jwt = require("jsonwebtoken");
 
 // Lazy load các controller để tránh circular dependency
+// Chỉ require khi thực sự cần sử dụng
 let conversationModule = null;
 let authModule = null;
 
@@ -48,7 +49,7 @@ function registerSocket(server) {
     console.log("[registerSocket] Đang khởi tạo socket server...");
     io = new Server(server, {
         cors: {
-            origin: true || process.env.CLIENT_URL || "http://localhost:3000",
+            origin: process.env.CLIENT_URL || "http://localhost:3000",
             methods: ["GET", "POST", "PUT", "DELETE"],
             credentials: true
         }
@@ -88,14 +89,14 @@ function registerSocket(server) {
             // Join phòng riêng user
             socket.join(userId);
 
-            // Join group conversations - chỉ join những nhóm có status là "active"
+            // Join group conversations
             try {
                 const convModule = getConversationModule();
                 if (convModule && convModule.getGroupConversation) {
                     const groupIdList = await convModule.getGroupConversation(userId);
                     if (Array.isArray(groupIdList)) {
                         groupIdList.forEach(group => {
-                            if (group.conversationId && group.status === 'active') {
+                            if (group.conversationId) {
                                 socket.join(group.conversationId);
                             }
                         });
@@ -109,25 +110,16 @@ function registerSocket(server) {
             console.log("socketCount : ", socketCount)
             if (socketCount === 1) {
                 console.log(`[ONLINE] User online: ${userId}`);
+                // Gửi sự kiện ONLINE_USER với data về user vừa online, truyền thêm avatar
                 const authMod = getAuthModule();
                 if (authMod && authMod.updateLastSeen2126) {
                     authMod.updateLastSeen2126(userId);
                 }
-
-                // --- NOTIFY ALL USERS EXCEPT THIS USER ABOUT ONLINE ---
-                // Lấy tất cả socket id của user này
-                const thisUserSocketIds = await redis.sMembers(`user:${userId}:sockets`);
-                // Emit tới tất cả client, ngoại trừ socket của user này
-                io.sockets.sockets.forEach((sock) => {
-                    // Nếu socket không thuộc về user hiện tại thì gửi
-                    if (sock.userId !== userId) {
-                        sock.emit("onlineUser", {
-                            userId,
-                            name: socket.data.name,
-                            type: "online",
-                            avatar: avatar
-                        });
-                    }
+                io.emit("onlineUser", {
+                    userId,
+                    name: socket.data.name,
+                    type: "online",
+                    avatar: avatar
                 });
             }
         });
@@ -138,7 +130,9 @@ function registerSocket(server) {
             const avatar = socket.avatar;
             if (!userId) return;
 
+            // Xóa socketId này khỏi user
             await redis.sRem(`user:${userId}:sockets`, socket.id);
+            // Kiểm tra còn socket nào không
             const remain = await redis.sCard(`user:${userId}:sockets`);
             if (remain === 0) {
                 await redis.sRem("online_users", userId);
@@ -149,16 +143,12 @@ function registerSocket(server) {
                     authMod.updateLastSeen(userId);
                 }
 
-                // -- NOTIFY ALL USERS EXCEPT THIS USER ABOUT OFFLINE --
-                io.sockets.sockets.forEach((sock) => {
-                    if (sock.userId !== userId) {
-                        sock.emit("onlineUser", {
-                            userId,
-                            name: socket.data.name,
-                            type: "offline",
-                            avatar: avatar
-                        });
-                    }
+                // Gửi sự kiện ONLINE_USER với data về user vừa offline, truyền thêm avatar
+                io.emit("onlineUser", {
+                    userId,
+                    name: socket.data.name,
+                    type: "offline",
+                    avatar: avatar
                 });
             }
         });
@@ -189,6 +179,7 @@ function registerSocket(server) {
                     return;
                 }
 
+                // Nếu client không kèm conversationId, lấy từ sendMessageHandler
                 if (!conversationId && result.conversationId) {
                     conversationId = result.conversationId;
                 }
@@ -200,13 +191,16 @@ function registerSocket(server) {
                     ...(conversationId && { conversationId })
                 };
 
+                // Lấy tất cả socketId của receiver (đa tab)
                 let receiverSocketIds = [];
                 try {
                     receiverSocketIds = await redis.sMembers(`user:${receiverId}:sockets`);
                 } catch { receiverSocketIds = []; }
 
+                // Gửi messageNotification cho cả sender và receiver với dữ liệu tin nhắn (private)
                 if (receiverSocketIds && receiverSocketIds.length > 0) {
                     receiverSocketIds.forEach(sid => {
+                        // Gửi cho từng socket của receiver
                         socket.to(sid).emit("receiveMessage", sendData);
                         socket.to(sid).emit("messageNotification", {
                             type: "private",
@@ -215,9 +209,11 @@ function registerSocket(server) {
                             conversationId,
                         });
                     });
+                    // Gửi lại cho sender nếu có conversationId (giúp đồng bộ giao diện)
                     if (conversationId) {
                         socket.emit("receiveMessage", { ...sendData, receiverId });
                     }
+                    // Thông báo notification cho sender
                     socket.emit("messageNotification", {
                         type: "private",
                         ...sendData,
@@ -225,6 +221,7 @@ function registerSocket(server) {
                         conversationId,
                     });
                 } else {
+                    // Nếu receiver offline vẫn gửi notification cho sender
                     socket.emit("messageError", {
                         error: "User not online",
                         receiverId
@@ -256,8 +253,11 @@ function registerSocket(server) {
 
         socket.on("sendRoomMessage", async (data) => {
             try {
+                // Gửi tin nhắn cho tất cả thành viên group ngoại trừ sender
                 socket.to(data.roomId).emit("receiveRoomMessage", data);
 
+                // Lưu ý: hàm sendGroupMessageHandler trả về gì thì tuỳ bạn (có thể bổ sung gắn id hoặc dữ liệu bổ sung)
+                // Thực hiện lưu message group (thường là không cần await nếu không trả về dữ liệu, nhưng để chắc chắn cập nhật nội dung gửi đi)
                 let savedMessage;
                 try {
                     const convModule = getConversationModule();
@@ -274,15 +274,18 @@ function registerSocket(server) {
                     return;
                 }
 
+                // Thông báo messageNotification cho tất cả thành viên (bao gồm cả người gửi):
+                // Lấy tất cả socket trong room (bao gồm cả sender)
                 const room = io.sockets.adapter.rooms.get(data.roomId) || new Set();
                 const notificationData = {
                     type: "group",
                     senderId: socket.userId,
                     message: data.message,
                     createdAt: savedMessage?.createdAt || new Date(),
-                    conversationId: data.roomId
+                    conversationId: data.roomId // luôn trả conversationId
                 };
 
+                // Gửi event đến từng socketId trong room
                 for (const socketId of room) {
                     const targetSocket = io.sockets.sockets.get(socketId);
                     if (targetSocket) {
@@ -295,81 +298,11 @@ function registerSocket(server) {
                 socket.emit("messageError", { error: "Failed to send room message" });
             }
         });
-
-        // ==== VIDEO CALL SOCKET EVENTS - trực tiếp không cần khai báo biến event ====
-
-        // 1. CALL_OFFER: "callOffer"
-        socket.on("callOffer", async (data) => {
-            // data: { targetUserId, ... }
-            const { targetUserId } = data;
-            const fromUserId = socket.userId;
-            // Đổi: lấy tên và avatar của người gọi
-            const fromName = socket.data?.name;
-            const fromAvatar = socket.avatar;
-            if (!targetUserId || !fromUserId) return;
-            const receiverSockets = await redis.sMembers(`user:${targetUserId}:sockets`);
-            receiverSockets.forEach(sid => {
-                socket.to(sid).emit("listenCallOffer", {
-                    fromUserId,
-                    fromName,
-                    fromAvatar,
-                    ...data
-                });
-            });
-        });
-
-        // 2. CALL_ACCEPT: "callAccept"
-        socket.on("callAccept", async (data) => {
-            // data: { targetUserId }
-            const { targetUserId } = data;
-            const fromUserId = socket.userId;
-            // Đổi: lấy tên và avatar của người accept
-            const fromName = socket.data?.name;
-            const fromAvatar = socket.avatar;
-            if (!targetUserId || !fromUserId) return;
-            // Gửi trực tiếp event listenAcceptCall tới tất cả socket của bên gọi, type = "accept"
-            const callerSockets = await redis.sMembers(`user:${targetUserId}:sockets`);
-            callerSockets.forEach(sid => {
-                socket.to(sid).emit("listenAcceptCall", {
-                    fromUserId,
-                    fromName,
-                    fromAvatar,
-                    type: "accept",
-                    ...data
-                });
-            });
-        });
-
-        // 2b. CALL_DECLINE: "callDecline"
-        socket.on("callDecline", async (data) => {
-            // data: { targetUserId }
-            const { targetUserId } = data;
-            const fromUserId = socket.userId;
-            // Đổi: lấy tên và avatar của người decline
-            const fromName = socket.data?.name;
-            const fromAvatar = socket.avatar;
-            if (!targetUserId || !fromUserId) return;
-            // Gửi trực tiếp event listenAcceptCall tới tất cả socket của bên gọi, type = "decline"
-            const callerSockets = await redis.sMembers(`user:${targetUserId}:sockets`);
-            callerSockets.forEach(sid => {
-                socket.to(sid).emit("listenAcceptCall", {
-                    fromUserId,
-                    fromName,
-                    fromAvatar,
-                    type: "decline",
-                    ...data
-                });
-            });
-        });
-
-        // 3. LISTEN_CALL_OFFER, LISTEN_ACCEPT_CALL:
-        // Hai event này là "emit" bên trên. Không cần đăng ký thêm.
-
-        // (Có thể bổ sung các event video call khác tại đây...)
     });
 }
 
 function getIO() {
+    
     return io;
 }
 

@@ -70,10 +70,13 @@ export const apiGetSinglePost = async (postId: string) => {
     }
 };
 
-export const apiGetHomePost = async () => {
+export const apiGetHomePost = async (cursorAt?: string) => {
     try {
-        const response = await instance.get('/post/homePosts');
-        console.warn(response.data)
+        const params: any = {};
+        if (cursorAt) {
+            params.cursorAt = cursorAt;
+        }
+        const response = await instance.get('/post/homePosts', { params });
         return response;
     } catch (error: any) {
         if (error.response) {
@@ -84,6 +87,7 @@ export const apiGetHomePost = async () => {
         throw error;
     }
 };
+
 
 export const apiReactPost = async ({ postId, react }: { postId: string, react: string }) => {
     try {

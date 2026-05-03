@@ -1,7 +1,7 @@
 "use client";
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { apiLoadMember, apiAcceptMember, apiRejectMember, apiBanMember } from "@/api/group.api";
+import { apiLoadMember, apiAcceptMember, apiRejectMember, apiBanMember, apiTransferGroupOwner } from "@/api/group.api";
 import { getCloudinaryImageLink } from "@/helper/croppedImageHelper";
 import { useSelector } from "react-redux";
 
@@ -255,6 +255,54 @@ const GroupMemberTab: React.FC<GroupMemberTabProps> = ({ groupId, isOwner, membe
         }
     };
 
+    // Fetch data helper for reloading members/pending after transfer owner
+    const fetchMembersData = useCallback(() => {
+        if (!groupId) return;
+        setLoading(true);
+        apiLoadMember({ groupId })
+            .then(res => {
+                if (res && res.success) {
+                    setMembers(Array.isArray(res.members) ? res.members : []);
+                    setPending(Array.isArray(res.pending) ? res.pending : []);
+                }
+            })
+            .catch(err => {
+                console.error("apiLoadMember error:", err);
+            })
+            .finally(() => {
+                setLoading(false);
+            });
+    }, [groupId]);
+
+    const handlePromoteToAdmin = (member: MemberApiData) => {
+        // Thực hiện chuyển quyền chủ nhóm cho thành viên này
+        if (!groupId) {
+            alert("Thiếu groupId!");
+            return;
+        }
+        if (!member?.user?.userId) {
+            alert("Thiếu userId thành viên!");
+            return;
+        }
+        if (window.confirm(`Bạn có chắc muốn chuyển quyền chủ nhóm cho ${member.user.name}?`)) {
+            apiTransferGroupOwner(groupId, member.user.userId)
+                .then((res) => {
+                    console.log(res)
+                    if (res && res.success) {
+                        alert("Chuyển quyền chủ nhóm thành công!");
+                        // Sau khi chuyển quyền, tải lại trang thay vì chỉ reload danh sách thành viên
+                        window.location.reload();
+                    } else {
+                        alert(res?.message || "Có lỗi xảy ra khi chuyển quyền chủ nhóm.");
+                    }
+                })
+                .catch((err) => {
+                    alert("Có lỗi xảy ra khi chuyển quyền chủ nhóm.");
+                    console.error(err);
+                });
+        }
+    };
+
     // Xử lý khi mở modal cấm
     const openBanModal = (member: {id:string, name:string}) => {
         setSelectedBanMember(member);
@@ -411,7 +459,17 @@ const GroupMemberTab: React.FC<GroupMemberTabProps> = ({ groupId, isOwner, membe
                                                         </div>
                                                     </div>
                                                     {!!isOwner && member.user.userId !== userId && (
-                                                        <div className="flex justify-end w-full">
+                                                        <div className="flex justify-end w-full gap-2">
+                                                            {/* Nút Chuyển quản trị viên mới - sát trái của nút Cấm */}
+                                                            <button
+                                                                className="px-4 py-2 bg-[#2563eb] text-white rounded-lg hover:bg-[#1656c0] transition"
+                                                                style={{marginRight: "2px"}}
+                                                                onClick={() => handlePromoteToAdmin(member)}
+                                                                type="button"
+                                                                title="Chuyển thành quản trị viên"
+                                                            >
+                                                                Chuyển quản trị viên
+                                                            </button>
                                                             <button
                                                                 className="px-4 py-2 bg-[#F87171] text-white rounded-lg hover:bg-[#e04545] transition"
                                                                 onClick={() => openBanModal({id: member.user.userId, name: member.user.name})}
@@ -419,7 +477,7 @@ const GroupMemberTab: React.FC<GroupMemberTabProps> = ({ groupId, isOwner, membe
                                                                 type="button"
                                                             >
                                                                 Cấm
-                                                            </button>
+                                                            </button>   
                                                         </div>
                                                     )}
                                                 </div>

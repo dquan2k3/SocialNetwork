@@ -901,7 +901,7 @@ export default function ProfilePage() {
                   { label: "Bài viết", key: "posts" },
                   { label: "Giới thiệu", key: "about" },
                   { label: "Bạn bè", key: "friends" },
-                  { label: "Ảnh", key: "photos" },
+                  { label: "Ảnh/Video", key: "photos" },
                 ].map((tab, idx) => (
                   <button
                     key={tab.key}

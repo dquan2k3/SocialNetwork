@@ -18,12 +18,6 @@ const ageOptions = [
     { label: "25-30", value: "25-30" },
     { label: "31-40", value: "31-40" },
 ];
-const locationOptions = [
-    { label: "Tất cả", value: "" },
-    { label: "Hà Nội", value: "Hà Nội" },
-    { label: "TP. Hồ Chí Minh", value: "TP. Hồ Chí Minh" },
-    { label: "Đà Nẵng", value: "Đà Nẵng" },
-];
 
 function getAgeFromBirthday(birthday: string) {
     if (!birthday) return "";
@@ -159,6 +153,34 @@ const UserTab: React.FC<UserTabProps> = ({ keyParam, idtab, onSearchChange }) =>
     const [loading, setLoading] = useState(false);
     const [errorUsers, setErrorUsers] = useState<string | null>(null);
     const [showEmptyKeyError, setShowEmptyKeyError] = useState(false);
+
+    // NEW: Tỉnh thành lấy từ API (chỉ dùng name)
+    const [provinceOptions, setProvinceOptions] = useState<Array<{ label: string, value: string }>>([
+        { label: "Tất cả", value: "" },
+    ]);
+
+    // FETCH API: fetch provinces (depth=2) and set options for location filter
+    useEffect(() => {
+        fetch("https://provinces.open-api.vn/api/v1/?depth=2")
+            .then((res) => res.json())
+            .then((data) => {
+                if (Array.isArray(data)) {
+                    const provinces = [
+                        { label: "Tất cả", value: "" },
+                        ...data.map((p: any) => ({
+                            label: p.name,
+                            value: p.name
+                        }))
+                    ];
+                    setProvinceOptions(provinces);
+                }
+            })
+            .catch((err) => {
+                console.log("Error fetching provinces:", err);
+                // fallback in error (still provide 'Tất cả')
+                setProvinceOptions([{ label: "Tất cả", value: "" }]);
+            });
+    }, []);
 
     // Khi tab id thay đổi => search lại theo keyParam truyền vào prop
     useEffect(() => {
@@ -372,7 +394,7 @@ const UserTab: React.FC<UserTabProps> = ({ keyParam, idtab, onSearchChange }) =>
                         value={locationFilter}
                         onChange={handleLocationFilterChange}
                     >
-                        {locationOptions.map((opt) => (
+                        {provinceOptions.map((opt) => (
                             <option
                                 key={opt.value}
                                 value={opt.value}

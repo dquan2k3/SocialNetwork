@@ -3,15 +3,14 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
     FaRegImage,
     FaRegPlayCircle,
-    FaMapMarkerAlt,
-    FaUserTag,
     FaTimes
 } from "react-icons/fa";
 import { useSelector } from "react-redux";
 
-type SelectedImage = {
+type SelectedMedia = {
     file: File;
     url: string;
+    type: "image" | "video";
 };
 
 interface PostingPopupProps {
@@ -29,19 +28,18 @@ const PostingPopup = ({
     setTextToPost,
     onClose,
 }: PostingPopupProps) => {
-    const [selectedImages, setSelectedImages] = useState<SelectedImage[]>([]);
+    const [selectedMedia, setSelectedMedia] = useState<SelectedMedia[]>([]);
     const [hasPostError, setHasPostError] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-    const fileInputRef = useRef<HTMLInputElement | null>(null);
+    const imageInputRef = useRef<HTMLInputElement | null>(null);
+    const videoInputRef = useRef<HTMLInputElement | null>(null);
     const contentWrapperRef = useRef<HTMLDivElement | null>(null);
 
     const user = useSelector((state: any) => state.user);
 
     const avatar = getCloudinaryImageLink(user.bio?.avatar, user.bio?.avatarCroppedArea, 56);
     const name = user.profile?.name;
-
-
 
     useEffect(() => {
         if (isPosting) {
@@ -92,9 +90,9 @@ const PostingPopup = ({
         }
     }, [isPosting]);
 
-    const clearSelectedImages = useCallback(() => {
-        setSelectedImages(prev => {
-            prev.forEach(img => URL.revokeObjectURL(img.url));
+    const clearSelectedMedia = useCallback(() => {
+        setSelectedMedia(prev => {
+            prev.forEach(media => URL.revokeObjectURL(media.url));
             return [];
         });
     }, []);
@@ -106,14 +104,14 @@ const PostingPopup = ({
 
     const handlePost = async () => {
         if (isSubmitting) return;
-        const hasContent = !!(textToPost?.trim()) || selectedImages.length > 0;
+        const hasContent = !!(textToPost?.trim()) || selectedMedia.length > 0;
         if (!hasContent) {
             setHasPostError(true);
             return;
         }
 
-        // files: truyền file ảnh thực cho upload cloud
-        const filesToSend = selectedImages.map(img => img.file);
+        // files: truyền file media thực cho upload cloud
+        const filesToSend = selectedMedia.map(media => media.file);
 
         const postData = {
             text: textToPost,
@@ -126,7 +124,7 @@ const PostingPopup = ({
             onClose();
             const result = await postPromise;
             if (result?.success) {
-                clearSelectedImages();
+                clearSelectedMedia();
                 setTextToPost("");
                 setHasPostError(false);
             } else {
@@ -141,9 +139,16 @@ const PostingPopup = ({
     };
 
     const handleAddImageClick = () => {
-        if (fileInputRef.current) {
-            fileInputRef.current.value = "";
-            fileInputRef.current.click();
+        if (imageInputRef.current) {
+            imageInputRef.current.value = "";
+            imageInputRef.current.click();
+        }
+    };
+
+    const handleAddVideoClick = () => {
+        if (videoInputRef.current) {
+            videoInputRef.current.value = "";
+            videoInputRef.current.click();
         }
     };
 
@@ -154,12 +159,25 @@ const PostingPopup = ({
         const newImages = files.map(file => ({
             file,
             url: URL.createObjectURL(file),
+            type: "image" as const,
         }));
-        setSelectedImages(prev => [...prev, ...newImages]);
+        setSelectedMedia(prev => [...prev, ...newImages]);
     };
 
-    const handleRemoveImage = (idx: number) => {
-        setSelectedImages(prev => {
+    const handleVideoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = Array.from(e.target.files || []);
+        if (files.length === 0) return;
+
+        const newVideos = files.map(file => ({
+            file,
+            url: URL.createObjectURL(file),
+            type: "video" as const,
+        }));
+        setSelectedMedia(prev => [...prev, ...newVideos]);
+    };
+
+    const handleRemoveMedia = (idx: number) => {
+        setSelectedMedia(prev => {
             URL.revokeObjectURL(prev[idx].url);
             return prev.filter((_, i) => i !== idx);
         });
@@ -170,7 +188,7 @@ const PostingPopup = ({
             <button
                 type="button"
                 className="absolute top-3 right-3 rounded-full"
-                title="Xoá ảnh"
+                title="Xoá media"
                 onClick={onClick}
                 tabIndex={0}
                 style={{
@@ -192,118 +210,44 @@ const PostingPopup = ({
         );
     }
 
-    function ImagePreviewGrid({ images, onRemove }: { images: SelectedImage[], onRemove: (idx: number) => void }) {
-        const count = images.length;
-        if (count === 1) {
-            return (
-                <div className="w-[572px] h-[572px] mt-3 bg-black rounded-lg flex items-center justify-center relative overflow-hidden">
-                    <img
-                        src={images[0].url || undefined}
-                        alt="selected-0"
-                        className="w-full h-full object-contain"
-                        style={{ aspectRatio: "1/1" }}
-                    />
-                    <MediaRemoveButton onClick={() => onRemove(0)} />
-                </div>
-            );
-        }
-        if (count === 2) {
-            return (
-                <div className="w-[572px] h-[286px] mt-3 flex gap-2">
-                    {images.map((img, i) =>
-                        <div className="w-1/2 h-full relative bg-black rounded-lg flex items-center justify-center overflow-hidden" key={i}>
-                            <img src={img.url || undefined}
-                                alt={`selected-${i}`}
+    function MediaPreviewGrid({ media, onRemove }: { media: SelectedMedia[], onRemove: (idx: number) => void }) {
+        const count = media.length;
+        if (count === 0) return null;
+
+        // For simplicity, show all in a single column, stacking previews.
+        // (Keep same UI as before for images count<=4, but allow mixing images/videos)
+        return (
+            <div className="w-[572px] mt-3 flex flex-col gap-2">
+                {media.map((item, idx) => (
+                    <div
+                        key={idx}
+                        className="relative bg-black rounded-lg overflow-hidden flex items-center justify-center"
+                        style={{
+                            height: count === 1 ? 572 : (count <= 2 ? 286 : 180),
+                            minHeight: 150,
+                            aspectRatio: "1/1",
+                        }}
+                    >
+                        {item.type === "image" ? (
+                            <img
+                                src={item.url || undefined}
+                                alt={`selected-img-${idx}`}
                                 className="w-full h-full object-contain"
                                 style={{ aspectRatio: "1/1" }}
                             />
-                            <MediaRemoveButton onClick={() => onRemove(i)} />
-                        </div>
-                    )}
-                </div>
-            );
-        }
-        if (count === 3) {
-            return (
-                <div className="w-[572px] h-[286px] mt-3 flex gap-2">
-                    <div className="w-1/2 h-full relative bg-black rounded-lg overflow-hidden flex items-center justify-center">
-                        <img src={images[0].url || undefined}
-                            alt="selected-0"
-                            className="w-full h-full object-contain"
-                            style={{ aspectRatio: "1/1" }}
-                        />
-                        <MediaRemoveButton onClick={() => onRemove(0)} />
-                    </div>
-                    <div className="w-1/2 h-full flex flex-col gap-2">
-                        {[1, 2].map(idx =>
-                            <div key={idx} className="h-1/2 w-full relative bg-black rounded-lg flex items-center justify-center overflow-hidden">
-                                <img src={images[idx].url || undefined}
-                                    alt={`selected-${idx}`}
-                                    className="w-full h-full object-contain"
-                                    style={{ aspectRatio: "1/1" }}
-                                />
-                                <MediaRemoveButton onClick={() => onRemove(idx)} />
-                            </div>
-                        )}
-                    </div>
-                </div>
-            );
-        }
-        if (count === 4) {
-            return (
-                <div className="w-[572px] h-[572px] mt-3 grid grid-cols-2 grid-rows-2 gap-2">
-                    {[0, 1, 2, 3].map(idx =>
-                        <div key={idx} className="relative bg-black rounded-lg overflow-hidden flex items-center justify-center">
-                            <img src={images[idx].url || undefined}
-                                alt={`selected-${idx}`}
+                        ) : (
+                            <video
+                                src={item.url || undefined}
+                                controls
                                 className="w-full h-full object-contain"
-                                style={{ aspectRatio: "1/1" }}
+                                style={{ aspectRatio: "1/1", background: "black" }}
                             />
-                            <MediaRemoveButton onClick={() => onRemove(idx)} />
-                        </div>
-                    )}
-                </div>
-            );
-        }
-        if (count >= 5) {
-            return (
-                <div className="w-[572px] mt-3 flex flex-col gap-2">
-                    <div className="flex gap-2 h-[186px]">
-                        {[0, 1].map(idx =>
-                            <div key={idx} className="w-1/2 h-full relative bg-black rounded-lg overflow-hidden flex items-center justify-center">
-                                <img src={images[idx].url || undefined}
-                                    alt={`selected-${idx}`}
-                                    className="w-full h-full object-contain"
-                                    style={{ aspectRatio: "1/1" }}
-                                />
-                                <MediaRemoveButton onClick={() => onRemove(idx)} />
-                            </div>
                         )}
+                        <MediaRemoveButton onClick={() => onRemove(idx)} />
                     </div>
-                    <div className="flex gap-2 h-[125px]">
-                        {[2, 3, 4].map(idx => {
-                            const isLast = idx === 4 && count > 5;
-                            return (
-                                <div key={idx} className="w-1/3 h-full relative bg-black rounded-lg overflow-hidden flex items-center justify-center">
-                                    <img src={images[idx].url || undefined}
-                                        alt={`selected-${idx}`}
-                                        className="w-full h-full object-contain"
-                                        style={{ aspectRatio: "1/1" }}
-                                    />
-                                    {isLast &&
-                                        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg text-white text-2xl font-bold">
-                                            +{count - 5}
-                                        </div>
-                                    }
-                                    <MediaRemoveButton onClick={() => onRemove(idx)} />
-                                </div>
-                            );
-                        })}
-                    </div>
-                </div>
-            );
-        }
-        return null;
+                ))}
+            </div>
+        );
     }
 
     return (
@@ -383,8 +327,8 @@ const PostingPopup = ({
                                 }}
                             />
                         </div>
-                        {selectedImages.length > 0 &&
-                            <ImagePreviewGrid images={selectedImages} onRemove={handleRemoveImage} />
+                        {selectedMedia.length > 0 &&
+                            <MediaPreviewGrid media={selectedMedia} onRemove={handleRemoveMedia} />
                         }
                     </div>
                 </div>
@@ -400,38 +344,29 @@ const PostingPopup = ({
                             Ảnh
                         </button>
                         <input
-                            ref={fileInputRef}
+                            ref={imageInputRef}
                             type="file"
                             accept="image/*"
                             multiple
                             style={{ display: "none" }}
                             onChange={handleImageChange}
                         />
-                        {/* Các nút tính năng khác để y như UI gợi ý */}
                         <button
                             type="button"
                             className="flex items-center gap-1 px-4 py-2 rounded-lg bg-[#333334] text-[#b0b3b8] font-medium hover:bg-[#484849] transition"
-                            disabled
+                            onClick={handleAddVideoClick}
                         >
                             <FaRegPlayCircle className="h-5 w-5" style={{ color: "#f3425f" }} />
                             Video
                         </button>
-                        <button
-                            type="button"
-                            className="flex items-center gap-1 px-4 py-2 rounded-lg bg-[#333334] text-[#b0b3b8] font-medium hover:bg-[#484849] transition"
-                            disabled
-                        >
-                            <FaMapMarkerAlt className="h-5 w-5" style={{ color: "#f7b928" }} />
-                            Checkin
-                        </button>
-                        <button
-                            type="button"
-                            className="flex items-center gap-1 px-4 py-2 rounded-lg bg-[#333334] text-[#b0b3b8] font-medium hover:bg-[#484849] transition"
-                            disabled
-                        >
-                            <FaUserTag className="h-5 w-5" style={{ color: "#1877f2" }} />
-                            Gắn thẻ
-                        </button>
+                        <input
+                            ref={videoInputRef}
+                            type="file"
+                            accept="video/*"
+                            multiple
+                            style={{ display: "none" }}
+                            onChange={handleVideoChange}
+                        />
                     </div>
                     <button
                         type="button"

@@ -415,13 +415,19 @@ export const searchGroup = async (req, res) => {
             name: { $regex: key, $options: "i" }
         };
 
-        // Lưu ý: privacy nằm ở groupSetting, phải $lookup mới lọc được (phức tạp hơn!)
-        // Nếu có type (public/private), lọc luôn ở pipeline (sau khi lookup)
+        // Lưu ý: privacy nằm ở groupSetting, phải $lookup mới lọc được
         let addTypeMatchStage = null;
+        // Không trả group type = secret
+        // Nếu có type, chỉ cho "public" hoặc "private"
         if (type && ["public", "private"].includes(type)) {
             addTypeMatchStage = {
                 $match: { "setting.privacy": type }
             };
+        } else {
+            // Bỏ hết nhóm secret khỏi kết quả, bất kể filter
+            addTypeMatchStage = {
+                $match: { "setting.privacy": { $ne: "secret" } }
+            }
         }
 
         // Bước sort
@@ -475,7 +481,7 @@ export const searchGroup = async (req, res) => {
             },
         ];
 
-        // Thêm lọc theo type nếu có
+        // Luôn loại bỏ nhóm secret bằng addTypeMatchStage
         if (addTypeMatchStage) {
             pipeline.push(addTypeMatchStage);
         }
@@ -499,6 +505,7 @@ export const searchGroup = async (req, res) => {
         const groups = await groupModel.aggregate(pipeline);
 
         // Định dạng kết quả trả về, bao gồm cover
+        // (chỉ trả privacy = public, private, không có secret do pipeline đã lọc)
         const result = groups.map(g => ({
             Id: g._id,
             name: g.name,
@@ -1225,5 +1232,62 @@ export const getGroupMedia = async (req, res) => {
     } catch (error) {
         console.log(error);
         res.status(500).json({ success: false, message: 'Lỗi server' });
+    }
+};
+
+// Chuyển quyền sở hữu nhóm
+exports.transferGroupOwner = async (req, res) => {
+    try {
+        const { groupId, userId } = req.body;
+        if (!groupId || !userId) {
+            return res.status(400).json({ success: false, message: "Missing groupId or userId" });
+        }
+
+        // Lấy group hiện tại
+        const group = await groupModel.findById(groupId);
+        if (!group) {
+            return res.status(404).json({ success: false, message: "Group not found" });
+        }
+
+        // Kiểm tra userId có phải là chủ sở hữu hiện tại không
+        if (String(group.owner) === String(userId)) {
+            return res.status(400).json({ success: false, message: "User is already the group owner" });
+        }
+
+        // Kiểm tra userId có là thành viên (đã active) của group không
+        const member = await groupMemberModel.findOne({
+            groupId: groupId,
+            userId: userId,
+            status: 'active'
+        });
+        if (!member) {
+            return res.status(400).json({ success: false, message: "User is not an active member of the group" });
+        }
+
+        // Cập nhật owner mới tại group
+        group.owner = userId;
+        await group.save();
+
+        // Cập nhật phân quyền owner cho userId mới
+        await groupMemberModel.updateOne(
+            { groupId: groupId, userId: userId },
+            { role: "owner" }
+        );
+
+        // Cập nhật phân quyền lại cho owner cũ thành member (nếu còn trong group)
+        await groupMemberModel.updateOne(
+            { groupId: groupId, userId: group.owner, role: "owner" },
+            { role: "member" }
+        );
+
+        res.status(200).json({ success: true, message: "Transferred group ownership successfully", group });
+    } catch (error) {
+        // Log detailed error information for debugging
+        console.error("Error transferring group owner:", {
+            message: error.message,
+            stack: error.stack,
+            error
+        });
+        res.status(500).json({ success: false, message: "Server error" });
     }
 };
