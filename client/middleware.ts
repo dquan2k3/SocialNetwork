@@ -9,7 +9,9 @@ function decodeJwt(token: string) {
         const payload = parts[1];
         // JWT uses base64url encoding
         const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
-        const decodedPayload = Buffer.from(base64, "base64").toString("utf-8");
+        // Pad base64 if needed
+        const padded = base64 + "===".slice((base64.length + 3) % 4);
+        const decodedPayload = atob(padded);
         return JSON.parse(decodedPayload);
     } catch (e) {
         return null;
