@@ -1,6 +1,18 @@
 const { Server } = require("socket.io");
-const redis = require("./src/config/redis");
+const { Redis } = require("@upstash/redis");
 const jwt = require("jsonwebtoken");
+require('dotenv').config();
+
+// Ensure the necessary environment variables are present for Upstash Redis
+if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
+  throw new Error("Missing UPSTASH_REDIS_REST_URL or UPSTASH_REDIS_REST_TOKEN in environment variables");
+}
+
+// Upstash Redis instance
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+});
 
 // Lazy load các controller để tránh circular dependency
 let conversationModule = null;
@@ -82,9 +94,9 @@ function registerSocket(server) {
             socket.avatar = avatar;
 
             // Lưu socketId đa tab
-            await redis.sAdd(`user:${userId}:sockets`, socket.id);
+            await redis.sadd(`user:${userId}:sockets`, socket.id);
             // Đánh dấu user online
-            await redis.sAdd("online_users", userId);
+            await redis.sadd("online_users", userId);
             // Join phòng riêng user
             socket.join(userId);
 
@@ -105,7 +117,7 @@ function registerSocket(server) {
                 console.error("Lỗi join group conversations:", err);
             }
 
-            const socketCount = await redis.sCard(`user:${userId}:sockets`);
+            const socketCount = await redis.scard(`user:${userId}:sockets`);
             console.log("socketCount : ", socketCount)
             if (socketCount === 1) {
                 console.log(`[ONLINE] User online: ${userId}`);
@@ -116,7 +128,7 @@ function registerSocket(server) {
 
                 // --- NOTIFY ALL USERS EXCEPT THIS USER ABOUT ONLINE ---
                 // Lấy tất cả socket id của user này
-                const thisUserSocketIds = await redis.sMembers(`user:${userId}:sockets`);
+                const thisUserSocketIds = await redis.smembers(`user:${userId}:sockets`);
                 // Emit tới tất cả client, ngoại trừ socket của user này
                 io.sockets.sockets.forEach((sock) => {
                     // Nếu socket không thuộc về user hiện tại thì gửi
@@ -138,10 +150,10 @@ function registerSocket(server) {
             const avatar = socket.avatar;
             if (!userId) return;
 
-            await redis.sRem(`user:${userId}:sockets`, socket.id);
-            const remain = await redis.sCard(`user:${userId}:sockets`);
+            await redis.srem(`user:${userId}:sockets`, socket.id);
+            const remain = await redis.scard(`user:${userId}:sockets`);
             if (remain === 0) {
-                await redis.sRem("online_users", userId);
+                await redis.srem("online_users", userId);
                 console.log(`[OFFLINE] User offline: ${userId}`);
 
                 const authMod = getAuthModule();
@@ -202,7 +214,7 @@ function registerSocket(server) {
 
                 let receiverSocketIds = [];
                 try {
-                    receiverSocketIds = await redis.sMembers(`user:${receiverId}:sockets`);
+                    receiverSocketIds = await redis.smembers(`user:${receiverId}:sockets`);
                 } catch { receiverSocketIds = []; }
 
                 if (receiverSocketIds && receiverSocketIds.length > 0) {
@@ -307,7 +319,7 @@ function registerSocket(server) {
             const fromName = socket.data?.name;
             const fromAvatar = socket.avatar;
             if (!targetUserId || !fromUserId) return;
-            const receiverSockets = await redis.sMembers(`user:${targetUserId}:sockets`);
+            const receiverSockets = await redis.smembers(`user:${targetUserId}:sockets`);
             receiverSockets.forEach(sid => {
                 socket.to(sid).emit("listenCallOffer", {
                     fromUserId,
@@ -328,7 +340,7 @@ function registerSocket(server) {
             const fromAvatar = socket.avatar;
             if (!targetUserId || !fromUserId) return;
             // Gửi trực tiếp event listenAcceptCall tới tất cả socket của bên gọi, type = "accept"
-            const callerSockets = await redis.sMembers(`user:${targetUserId}:sockets`);
+            const callerSockets = await redis.smembers(`user:${targetUserId}:sockets`);
             callerSockets.forEach(sid => {
                 socket.to(sid).emit("listenAcceptCall", {
                     fromUserId,
@@ -350,7 +362,7 @@ function registerSocket(server) {
             const fromAvatar = socket.avatar;
             if (!targetUserId || !fromUserId) return;
             // Gửi trực tiếp event listenAcceptCall tới tất cả socket của bên gọi, type = "decline"
-            const callerSockets = await redis.sMembers(`user:${targetUserId}:sockets`);
+            const callerSockets = await redis.smembers(`user:${targetUserId}:sockets`);
             callerSockets.forEach(sid => {
                 socket.to(sid).emit("listenAcceptCall", {
                     fromUserId,
