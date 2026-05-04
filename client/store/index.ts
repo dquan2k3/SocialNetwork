@@ -9,7 +9,8 @@ export const store = configureStore({
     user: userReducer,
     cacheConversations: cacheConversationsReducer,
   },
-  devTools: process.env.NODE_ENV !== "production",
+  devTools: true,
+//  devTools: process.env.NODE_ENV !== "production",
 });
 
 export type RootState = ReturnType<typeof store.getState>;
