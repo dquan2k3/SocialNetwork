@@ -18,8 +18,9 @@ function decodeJwt(token: string) {
 
 export function middleware(req: NextRequest) {
     const token = req.cookies.get("token")?.value;
+    console.log("token", token)
     const pathname = req.nextUrl.pathname;
-
+    console.log("pathname", pathname)
     let decoded: any = null;
 
     // Nếu có token, decode
