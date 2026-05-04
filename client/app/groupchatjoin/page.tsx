@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import {
     apiLoadInfoGroupConversation,
@@ -7,8 +7,13 @@ import {
     apiCancelJoinGroupConversation,
 } from "@/api/conversation.api";
 
-export default function JoinChatPage() {
+// Wrapper để suspend khi dùng useSearchParams
+function SuspendedSearchParamsWrapper({ children }: { children: (searchParams: ReturnType<typeof useSearchParams>) => React.ReactNode }) {
     const searchParams = useSearchParams();
+    return <>{children(searchParams)}</>;
+}
+
+function JoinChatPageInner({ searchParams }: { searchParams: ReturnType<typeof useSearchParams> }) {
     const groupId = searchParams.get("idg") || "";
 
     const [groupInfo, setGroupInfo] = useState<any>(null);
@@ -167,5 +172,15 @@ export default function JoinChatPage() {
         <div className="flex flex-col items-center justify-center min-h-full bg-[#18191A]">
             {mainContent}
         </div>
+    );
+}
+
+export default function JoinChatPage() {
+    return (
+        <Suspense fallback={<div>Đang tải...</div>}>
+            <SuspendedSearchParamsWrapper>
+                {(searchParams) => <JoinChatPageInner searchParams={searchParams} />}
+            </SuspendedSearchParamsWrapper>
+        </Suspense>
     );
 }

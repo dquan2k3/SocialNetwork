@@ -1,18 +1,36 @@
 "use client";
-import React, { useEffect, useRef, useState, useCallback } from "react";
-import { useSearchParams } from "next/navigation";
+import React, { useEffect, useRef, useState, useCallback, Suspense } from "react";
 import { useSocket } from "@/socket/SocketProvider";
 import { useChatSocket } from "@/socket/useChatSocket";
 import { useRouter } from "next/navigation";
-
+import { useSearchParams } from "next/navigation";
 
 // Kiểu CallStatus tường minh để tránh lỗi so sánh types
 type CallStatus = "idle" | "calling" | "accepted" | "declined";
 
-// Đã thêm logic: lắng nghe acceptCall (listenAcceptCall) và button gọi thử nghiệm gửi callOffer
+// --- Helper component to wrap useSearchParams in Suspense ---
+function SearchParamsWrapper({ children }: { children: (searchParams: URLSearchParams) => React.ReactNode }) {
+  const searchParams = useSearchParams();
+  return <>{children(searchParams)}</>;
+}
 
 export default function CallVideoPage() {
-  const searchParams = useSearchParams();
+  return (
+    <Suspense fallback={<div className="flex flex-col items-center justify-center min-h-screen bg-[#20232a]"><div className="text-white">Đang tải...</div></div>}>
+      <CallVideoPageContent />
+    </Suspense>
+  );
+}
+
+function CallVideoPageContent() {
+  return (
+    <SearchParamsWrapper>
+      {(searchParams) => <CallVideoPageInner searchParams={searchParams} />}
+    </SearchParamsWrapper>
+  );
+}
+
+function CallVideoPageInner({ searchParams }: { searchParams: URLSearchParams }) {
   const groupId = searchParams.get("idc") || "";
   const videoRef = useRef<HTMLVideoElement>(null);
   const [hasMedia, setHasMedia] = useState(false);

@@ -1,8 +1,8 @@
 "use client";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 
-export default function CallRoomPage() {
+function CallRoomContent() {
   const searchParams = useSearchParams();
   const targetId = searchParams.get("idc") || ""; 
 
@@ -93,5 +93,13 @@ export default function CallRoomPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function CallRoomPage() {
+  return (
+    <Suspense fallback={<div className="text-center text-gray-600 mt-10">Đang tải...</div>}>
+      <CallRoomContent />
+    </Suspense>
   );
 }

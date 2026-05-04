@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Suspense } from "react";
 // api imports and filters removed (all handled in tabs)
 import { useSelector } from "react-redux";
 import { useSearchParams } from "next/navigation";
@@ -7,31 +7,15 @@ import UserTab from "./tabs/user";
 import PostTab from "./tabs/post";
 import GroupTab from "./tabs/group";
 
+// Component bọc useSearchParams vào Suspense để đảm bảo đúng luồng dữ liệu
+function SearchParamsWrapper({ children }: { children: (params: ReturnType<typeof useSearchParams>) => React.ReactNode }) {
+    const searchParams = useSearchParams();
+    return <>{children(searchParams)}</>;
+}
+
 export default function SearchPage() {
     const reduxUser = useSelector((state: any) => state.user);
     const myId = reduxUser.userId;
-    const searchParams = useSearchParams();
-
-    // Biến chứa key và idtab, có thể thay đổi
-    const [searchParamsState, setSearchParamsState] = useState({
-        key: searchParams.get("key") || "",
-        idtab: searchParams.get("id") || "",
-    });
-
-    useEffect(() => {
-        setSearchParamsState({
-            key: searchParams.get("key") || "",
-            idtab: searchParams.get("id") || "",
-        });
-    }, [searchParams]);
-
-    // Hàm chỉ thay đổi key
-    const onSearchChange = (newKey: string) => {
-        setSearchParamsState(prev => ({
-            ...prev,
-            key: newKey
-        }));
-    };
 
     // Tab state
     const [tab, setTab] = useState<"users" | "posts" | "groups">("users");
@@ -151,28 +135,60 @@ export default function SearchPage() {
                         className="w-full max-w-[800px] flex flex-col flex-grow items-center"
                         style={{ flexBasis: "66.666667%" }}
                     >
-                        {/* Render tab content by tab */}
-                        {tab === "users" && (
-                            <UserTab
-                                keyParam={searchParamsState.key}
-                                idtab={searchParamsState.idtab}
-                                onSearchChange={onSearchChange}
-                            />
-                        )}
-                        {tab === "posts" && (
-                            <PostTab
-                                keyParam={searchParamsState.key}
-                                idtab={searchParamsState.idtab}
-                                onSearchChange={onSearchChange}
-                            />
-                        )}
-                        {tab === "groups" && (
-                            <GroupTab
-                                keyParam={searchParamsState.key}
-                                idtab={searchParamsState.idtab}
-                                onSearchChange={onSearchChange}
-                            />
-                        )}
+                        <Suspense fallback={<div>Đang tải kết quả tìm kiếm...</div>}>
+                            <SearchParamsWrapper>
+                                {(searchParams) => {
+                                    // Biến chứa key và idtab, có thể thay đổi
+                                    const [searchParamsState, setSearchParamsState] = React.useState({
+                                        key: searchParams.get("key") || "",
+                                        idtab: searchParams.get("id") || "",
+                                    });
+
+                                    useEffect(() => {
+                                        setSearchParamsState({
+                                            key: searchParams.get("key") || "",
+                                            idtab: searchParams.get("id") || "",
+                                        });
+                                        // eslint-disable-next-line react-hooks/exhaustive-deps
+                                    }, [searchParams]);
+
+                                    // Hàm chỉ thay đổi key
+                                    const onSearchChange = (newKey: string) => {
+                                        setSearchParamsState(prev => ({
+                                            ...prev,
+                                            key: newKey
+                                        }));
+                                    };
+
+                                    return (
+                                        <>
+                                            {/* Render tab content by tab */}
+                                            {tab === "users" && (
+                                                <UserTab
+                                                    keyParam={searchParamsState.key}
+                                                    idtab={searchParamsState.idtab}
+                                                    onSearchChange={onSearchChange}
+                                                />
+                                            )}
+                                            {tab === "posts" && (
+                                                <PostTab
+                                                    keyParam={searchParamsState.key}
+                                                    idtab={searchParamsState.idtab}
+                                                    onSearchChange={onSearchChange}
+                                                />
+                                            )}
+                                            {tab === "groups" && (
+                                                <GroupTab
+                                                    keyParam={searchParamsState.key}
+                                                    idtab={searchParamsState.idtab}
+                                                    onSearchChange={onSearchChange}
+                                                />
+                                            )}
+                                        </>
+                                    );
+                                }}
+                            </SearchParamsWrapper>
+                        </Suspense>
                     </div>
                 </main>
                 {windowWidth < 640 ? null : (

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faUser, faQuestionCircle, faCrown } from "@fortawesome/free-solid-svg-icons";
@@ -164,7 +164,7 @@ function ConfirmDialog({
     );
 }
 
-export default function GroupChatManagerPage() {
+function GroupChatManagerInner() {
     const searchParams = useSearchParams();
     const groupId = searchParams.get("idg") || "";
 
@@ -607,5 +607,26 @@ export default function GroupChatManagerPage() {
                 </div>
             </div>
         </div>
+    );
+}
+
+export default function GroupChatManagerPage() {
+    return (
+        <Suspense fallback={
+            <div
+                style={{
+                    minHeight: 300,
+                    display: "flex",
+                    justifyContent: "center",
+                    alignItems: "center",
+                    background: "#23272e",
+                    color: "#fff",
+                }}
+            >
+                Đang tải...
+            </div>
+        }>
+            <GroupChatManagerInner />
+        </Suspense>
     );
 }

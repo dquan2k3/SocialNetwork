@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, Suspense } from "react";
 import { apiGetFriend } from "@/api/relationship.api";
 import RelationshipButton from "@/components/ui/RelationshipButton";
 import { useSelector } from "react-redux";
@@ -139,7 +139,8 @@ function mapServerFriendsToUserObjs(friends: any[], tab: TabKey): User[] {
     });
 }
 
-function FriendsPage() {
+// Wrap SearchParam-dependent logic in a component
+function FriendsPageContent() {
     const searchParams = useSearchParams();
     const keyParamRaw = searchParams?.get("key");
 
@@ -418,5 +419,13 @@ function FriendsPage() {
     );
 }
 
-export default FriendsPage;
+// Outer component wraps in Suspense
+function FriendsPage() {
+    return (
+        <Suspense fallback={<div className="text-center text-gray-400">Đang tải...</div>}>
+            <FriendsPageContent />
+        </Suspense>
+    );
+}
 
+export default FriendsPage;

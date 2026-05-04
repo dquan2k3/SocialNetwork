@@ -1,8 +1,9 @@
 "use client";
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, Suspense } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faSquarePlus, faCrown } from "@fortawesome/free-solid-svg-icons";
 import { getMyGroups } from "@/api/group.api";
+// Đặt useSearchParams vào trong một component được suspend
 import { useSearchParams } from "next/navigation";
 import GroupPost from "@/components/ui/GroupPost";
 import UpdateCoverPopup from "./component/updateCover";
@@ -158,7 +159,22 @@ function getPrivacyLabel(privacy?: string) {
     }
 }
 
+// SuspendedSearchParamsWrapper wraps the code using useSearchParams in <Suspense>
+function SuspendedSearchParamsWrapper({ children }: { children: (searchParams: ReturnType<typeof useSearchParams>) => React.ReactNode }) {
+    const searchParams = useSearchParams();
+    return <>{children(searchParams)}</>;
+}
+
 export default function GroupPage() {
+    return (
+        <Suspense fallback={<div>Đang tải...</div>}>
+            <GroupPageInner />
+        </Suspense>
+    );
+}
+
+// Phần code còn lại chuyển sang GroupPageInner, gọi useSearchParams ở đây trong khối được suspend
+function GroupPageInner() {
     const searchParams = useSearchParams();
     const groupParamId = searchParams.get("groupId");
     const [groups, setGroups] = useState<any[]>([]);

@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useRef, useEffect, ReactNode, useCallback } from "react";
+import React, { useState, useRef, useEffect, ReactNode, useCallback, Suspense } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { authLogout } from "@/services/auth";
@@ -610,11 +610,22 @@ function IncomingCallPopup({ open, caller, onAccept, onReject }: { open: boolean
     );
 }
 
+// This wrapper will ONLY provide useSearchParams to its children via Suspense
+function SearchParamsSuspenseWrapper({ children }: { children: (searchParams: ReturnType<typeof useSearchParams>) => React.ReactNode }) {
+    const searchParams = useSearchParams();
+    return <>{children(searchParams)}</>;
+}
+
 function Header() {
     const pathname = usePathname();
     const router = useRouter();
     const dispatch = useDispatch();
-    const searchParams = useSearchParams();
+
+    // Place useSearchParams in Suspense
+    const [searchHasFocus, setSearchHasFocus] = useState(false);
+    const [searchValue, setSearchValue] = useState(""); // will be set from search params
+    const [lastSearchId, setLastSearchId] = useState<number>(() => Math.floor(Math.random() * 1000000));
+    const [initialSearch, setInitialSearch] = useState("");
     const isBelow900 = useScreenBelow900();
 
     const user = useSelector((state: any) => state.user);
@@ -654,15 +665,6 @@ function Header() {
     const [openNotif, setOpenNotif] = useState(false);
     const [openMsg, setOpenMsg] = useState(false);
     const [openProfile, setOpenProfile] = useState(false);
-
-    const initialSearch = React.useMemo(() => {
-        if (!searchParams) return "";
-        return searchParams.get("key") || "";
-    }, [searchParams]);
-    const [lastSearchId, setLastSearchId] = useState<number>(() => Math.floor(Math.random() * 1000000));
-
-    const [searchHasFocus, setSearchHasFocus] = useState(false);
-    const [searchValue, setSearchValue] = useState(initialSearch);
 
     const { openChat } = useChatDock();
 
@@ -1204,8 +1206,6 @@ function Header() {
         return () => { typeof off === "function" && off(); };
     }, [listenNotification, userId]);
 
-    const searchExpanded = searchHasFocus || !!searchValue;
-    const searchButtonFull = searchHasFocus || !!searchValue;
     const profile = user?.profile || {};
     const displayName = profile?.name || "Người dùng";
     const displayUsername = profile?.username || user?.username || "";
@@ -1436,420 +1436,440 @@ function Header() {
         setIncomingCall(null);
     };
 
+    // Suspense-wrapped content for getting searchParams
     return (
-        <>
-            {/* Show incoming call popup */}
-            <IncomingCallPopup
-                open={showCallPopup}
-                caller={incomingCall}
-                onAccept={handleAcceptCall}
-                onReject={handleRejectCall}
-            />
+        <Suspense fallback={null}>
+            <SearchParamsSuspenseWrapper>
+                {(searchParams) => {
+                    // Must set up search params state here (only runs client-side after suspense resolves)
+                    React.useEffect(() => {
+                        const key = searchParams?.get("key") || "";
+                        setInitialSearch(key);
+                        setSearchValue(key);
+                    // eslint-disable-next-line react-hooks/exhaustive-deps
+                    }, [searchParams?.get("key")]);
 
-            {/* ShowPostById when showPost=true and selectedPostId */}
-            <ShowPostById
-                postId={selectedPostId}
-                isShow={showPost}
-                onClose={handleClosePost}
-            />
-            <header
-                className="fixed flex flex-col top-0 left-0 bg-white dark:bg-zinc-900 shadow-sm z-200 border-b border-zinc-100 dark:border-zinc-800 items-stretch"
-                style={{
-                    width: "100vw",
-                    right: 0,
-                }}
-            >
-                <div className="w-full h-16 flex px-4">
-                    <div className="flex flex-row w-full h-full items-stretch justify-between">
-                        {/* Left: Logo & Search */}
-                        <div className="flex items-center gap-3 min-w-0 h-full flex-1">
-                            <button
-                                type="button"
-                                onClick={() => router.push("/home")}
-                                className="flex items-center justify-center w-12 h-12 rounded-full bg-gradient-to-tr from-blue-600 to-blue-300 dark:from-blue-400 dark:to-blue-600 shadow-md border-[2px] border-white dark:border-zinc-800 shrink-0 cursor-pointer"
-                                style={{ marginRight: "0.5rem" }}
-                                aria-label="Chuyển về trang chủ"
-                            >
-                                <span className="select-none text-white text-2xl font-bold">L</span>
-                            </button>
-                            {/* Search input does NOT push the center menu to the right */}
-                            <div
+                    const searchExpanded = searchHasFocus || !!searchValue;
+                    const searchButtonFull = searchHasFocus || !!searchValue;
+
+                    return (
+                        <>
+                            {/* Show incoming call popup */}
+                            <IncomingCallPopup
+                                open={showCallPopup}
+                                caller={incomingCall}
+                                onAccept={handleAcceptCall}
+                                onReject={handleRejectCall}
+                            />
+
+                            {/* ShowPostById when showPost=true and selectedPostId */}
+                            <ShowPostById
+                                postId={selectedPostId}
+                                isShow={showPost}
+                                onClose={handleClosePost}
+                            />
+                            <header
+                                className="fixed flex flex-col top-0 left-0 bg-white dark:bg-zinc-900 shadow-sm z-200 border-b border-zinc-100 dark:border-zinc-800 items-stretch"
                                 style={{
-                                    width: searchExpanded ? "18rem" : "11rem",
-                                    transition: "width 0.3s",
-                                    minWidth: 0,
+                                    width: "100vw",
+                                    right: 0,
                                 }}
                             >
-                                <form
-                                    className={`
-                                      group relative flex items-center transition-all duration-300
-                                      h-10 bg-zinc-100 dark:bg-zinc-800 rounded-full border
-                                      border-[#3B3D3E] shadow-inner
-                                  `}
-                                    style={{ minWidth: 0, width: "100%" }}
-                                    onSubmit={handleSearchSubmit}
-                                >
-                                    <input
-                                        type="text"
-                                        value={searchValue}
-                                        onFocus={() => setSearchHasFocus(true)}
-                                        onBlur={() => setSearchHasFocus(false)}
-                                        onChange={(e) => setSearchValue(e.target.value)}
-                                        placeholder="Tìm kiếm..."
-                                        className={`
-                                          pl-4 ${searchButtonFull ? "py-0" : "py-1.5"} rounded-full bg-transparent
-                                          text-sm focus:outline-none transition-all duration-200 
-                                          w-full h-full
-                                          text-zinc-900 dark:text-zinc-100
-                                          cursor-pointer focus:cursor-text
-                                        `}
-                                        style={{
-                                            background: "none",
-                                            paddingRight: 0,
-                                            ...(searchButtonFull
-                                                ? {
-                                                    paddingTop: 0,
-                                                    paddingBottom: 0,
-                                                    height: "2.5rem",
-                                                }
-                                                : {}),
-                                        }}
-                                    />
-                                    <button
-                                        type="submit"
-                                        className={`
-                                          absolute right-0 top-1/2 -translate-y-1/2 flex items-center justify-center 
-                                          text-white rounded-full transition cursor-pointer
-                                        `}
-                                        tabIndex={-1}
-                                        style={{
-                                            background: "#18181B",
-                                            transition: "background 0.2s",
-                                            padding: searchButtonFull ? 0 : undefined,
-                                            width: "40px",
-                                            height: "40px",
-                                            minWidth: "40px",
-                                            minHeight: "40px",
-                                            border: "1.5px solid #3B3D3E",
-                                        }}
-                                        onMouseEnter={e => {
-                                            (e.currentTarget as HTMLButtonElement).style.background = "#2563eb";
-                                        }}
-                                        onMouseLeave={e => {
-                                            (e.currentTarget as HTMLButtonElement).style.background = "#18181B";
-                                        }}
-                                    >
-                                        <svg width="20" height="20" fill="none" viewBox="0 0 20 20">
-                                            <circle cx="9.5" cy="9.5" r="7" stroke="currentColor" strokeWidth="2" />
-                                            <path d="M16.5 16.5L13.5 13.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                                        </svg>
-                                    </button>
-                                </form>
-                            </div>
-                        </div>
-
-                        {!isBelow900 && <HeaderMenuCenter />}
-
-                        {/* Right: Actions */}
-                        <div className="flex items-center gap-3 h-full flex-1 justify-end min-w-0">
-                            {/* Notification bell */}
-                            <div className="relative flex items-center h-full">
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setOpenNotif((o) => !o);
-                                        setOpenMsg(false);
-                                        setOpenProfile(false);
-                                    }}
-                                    className={`
-                                        w-12 h-12 flex items-center justify-center rounded-full border
-                                        transition cursor-pointer
-                                        ${openNotif ? "bg-blue-600 border-blue-600" : "bg-zinc-900 border-[#3B3D3E] dark:bg-zinc-900"}
-                                    `}
-                                    style={{ marginTop: "auto", marginBottom: "auto" }}
-                                >
-                                    <svg width="26" height="26" viewBox="0 0 22 22" fill="none">
-                                        <path
-                                            d="M11 20a2.25 2.25 0 0 1-2.25-2.25h4.5A2.25 2.25 0 0 1 11 20zM18.5 16v-6a7.5 7.5 0 0 0-15 0v6l-1.5 1.5v.5h18v-.5L18.5 16z"
-                                            fill={openNotif ? "#fff" : "#fff"}
-                                            stroke={openNotif ? "#fff" : "#fff"}
-                                            strokeWidth="1.2"
-                                        />
-                                    </svg>
-                                    <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-blue-500 rounded-full border-2 border-white dark:border-zinc-900"></span>
-                                </button>
-                                <Dropdown open={openNotif} setOpen={setOpenNotif}>
-                                    <div className="font-semibold mb-2 min-w-[350px] max-w-[400px] text-zinc-900 dark:text-zinc-100">Thông báo</div>
-                                    <ul>
-                                        {notifications.length === 0 && (
-                                            <li className="py-3 text-center text-zinc-500">Không có thông báo mới</li>
-                                        )}
-                                        {notifications.map((n) => (
-                                            <li
-                                                key={n.id}
-                                                className="py-2 px-2 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer flex gap-2 items-center"
-                                                onClick={() => {
-                                                    if (n.type === "friendRequest" && n.from) {
-                                                        router.push("/friends?key=received");
-                                                        setOpenNotif(false);
-                                                        return;
-                                                    } else if (n.type === "acceptFriend") {
-                                                        router.push("/friends");
-                                                        setOpenNotif(false);
-                                                        return;
-                                                    }
-                                                    if (n.post) {
-                                                        setSelectedPostId(n.post);
-                                                        setShowPost(true);
-                                                        setOpenNotif(false);
-                                                    }
-                                                }}
+                                <div className="w-full h-16 flex px-4">
+                                    <div className="flex flex-row w-full h-full items-stretch justify-between">
+                                        {/* Left: Logo & Search */}
+                                        <div className="flex items-center gap-3 min-w-0 h-full flex-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => router.push("/home")}
+                                                className="flex items-center justify-center w-12 h-12 rounded-full bg-gradient-to-tr from-blue-600 to-blue-300 dark:from-blue-400 dark:to-blue-600 shadow-md border-[2px] border-white dark:border-zinc-800 shrink-0 cursor-pointer"
+                                                style={{ marginRight: "0.5rem" }}
+                                                aria-label="Chuyển về trang chủ"
                                             >
-                                                <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
-                                                    {n.avatar && (
-                                                        <img
-                                                            src={n.avatar}
-                                                            alt={n.name || "Avatar"}
-                                                            className="w-9 h-9 rounded-full object-cover border border-zinc-200 dark:border-zinc-700 flex-shrink-0 mr-3"
-                                                            style={{ minWidth: 36, minHeight: 36 }}
-                                                        />
-                                                    )}
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="text-sm text-zinc-800 dark:text-zinc-200">{n.content}</div>
-                                                        <div className="text-xs text-zinc-400 mt-0.5 flex items-center gap-2">
-                                                            {
-                                                                n.notificationTypeIcon &&
-                                                                <FontAwesomeIcon
-                                                                    icon={n.notificationTypeIcon}
-                                                                    style={{ color: n.notificationTypeIconColor || "#2563eb" }}
-                                                                    title={n.notificationTypeIconTitle || ""}
-                                                                    className="mr-1 min-w-[15px]"
-                                                                />
-                                                            }
-                                                            <span>{n.time}</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </Dropdown>
-                            </div>
-
-                            {/* Message */}
-                            <div className="relative flex items-center h-full">
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setOpenMsg((o) => !o);
-                                        setOpenNotif(false);
-                                        setOpenProfile(false);
-                                    }}
-                                    className={`
-                                        w-12 h-12 flex items-center justify-center rounded-full border
-                                        transition cursor-pointer
-                                        ${openMsg ? "bg-blue-600 border-blue-600" : "bg-zinc-900 border-[#3B3D3E] dark:bg-zinc-900"}
-                                    `}
-                                    style={{ marginTop: "auto", marginBottom: "auto" }}
-                                >
-                                    <svg width="26" height="26" viewBox="0 0 22 22" fill="none">
-                                        <path
-                                            d="M2 6.857C2 5.832 2.832 5 3.857 5h14.286C19.168 5 20 5.832 20 6.857v8.286C20 16.168 19.168 17 18.143 17H6l-4 4v-4.143C2 16.168 2 15.143 2 15.143V6.857z"
-                                            fill={openMsg ? "#fff" : "#fff"}
-                                            stroke={openMsg ? "#fff" : "#fff"}
-                                            strokeWidth="1.2"
-                                        />
-                                    </svg>
-                                    <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-white dark:border-zinc-900"></span>
-                                </button>
-                                <Dropdown open={openMsg} setOpen={setOpenMsg}>
-                                    <div
-                                        className="flex items-center justify-between mb-2 z-2000 text-zinc-900 dark:text-zinc-100"
-                                        style={{
-                                            minWidth: "340px",
-                                        }}
-                                    >
-                                        <div className="font-semibold flex items-center">
-                                            Tin nhắn
-                                        </div>
-                                        <div className="ml-2">
-                                            <CreateGroupButton onGroupCreated={handleGroupCreated} />
-                                        </div>
-                                    </div>
-                                    <MessagePrioritySwitch />
-                                    <ul>
-                                        {/* Always show self chat row at the top */}
-                                        <SelfChatRow />
-                                        {messages.length === 0 && (
-                                            <li
+                                                <span className="select-none text-white text-2xl font-bold">L</span>
+                                            </button>
+                                            {/* Search input does NOT push the center menu to the right */}
+                                            <div
                                                 style={{
-                                                    width: "340px",
-                                                    height: "75px",
-                                                    display: "flex",
-                                                    alignItems: "center",
-                                                    justifyContent: "center",
-                                                }}
-                                                className="text-center text-zinc-500"
-                                            >
-                                                Chưa có tin nhắn
-                                            </li>
-                                        )}
-                                        {messages.map((m) => (
-                                            <li
-                                                key={m.id}
-                                                className="flex items-center gap-4 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
-                                                style={{
-                                                    width: "340px",
-                                                    height: "75px",
-                                                    padding: "12px 14px",
-                                                    boxSizing: "border-box"
-                                                }}
-                                                onClick={() => {
-                                                    const msgInfo = {
-                                                        type: m.type,
-                                                        userId: m.userId,
-                                                        conversationId: m.conversationId,
-                                                        name: m.from,
-                                                        username: m.username,
-                                                        avatar: m.avatar,
-                                                        groupName: m.groupName,
-                                                        owner: m.owner,
-                                                    };
-                                                    handleMessageClick(msgInfo);
+                                                    width: searchExpanded ? "18rem" : "11rem",
+                                                    transition: "width 0.3s",
+                                                    minWidth: 0,
                                                 }}
                                             >
-                                                {m.type === "group" ? (
-                                                    <GroupAvatar avatar={m.avatar} groupName={m.groupName} size={56} />
-                                                ) : (
-                                                    <img
-                                                        src={m.avatar}
-                                                        alt={m.from}
-                                                        className="rounded-full object-cover border"
+                                                <form
+                                                    className={`
+                                                      group relative flex items-center transition-all duration-300
+                                                      h-10 bg-zinc-100 dark:bg-zinc-800 rounded-full border
+                                                      border-[#3B3D3E] shadow-inner
+                                                  `}
+                                                    style={{ minWidth: 0, width: "100%" }}
+                                                    onSubmit={handleSearchSubmit}
+                                                >
+                                                    <input
+                                                        type="text"
+                                                        value={searchValue}
+                                                        onFocus={() => setSearchHasFocus(true)}
+                                                        onBlur={() => setSearchHasFocus(false)}
+                                                        onChange={(e) => setSearchValue(e.target.value)}
+                                                        placeholder="Tìm kiếm..."
+                                                        className={`
+                                                          pl-4 ${searchButtonFull ? "py-0" : "py-1.5"} rounded-full bg-transparent
+                                                          text-sm focus:outline-none transition-all duration-200 
+                                                          w-full h-full
+                                                          text-zinc-900 dark:text-zinc-100
+                                                          cursor-pointer focus:cursor-text
+                                                        `}
                                                         style={{
-                                                            width: "56px",
-                                                            height: "56px",
-                                                            minWidth: "56px",
-                                                            minHeight: "56px",
+                                                            background: "none",
+                                                            paddingRight: 0,
+                                                            ...(searchButtonFull
+                                                                ? {
+                                                                    paddingTop: 0,
+                                                                    paddingBottom: 0,
+                                                                    height: "2.5rem",
+                                                                }
+                                                                : {}),
                                                         }}
                                                     />
-                                                )}
-                                                <div className="flex-1 min-w-0 flex flex-col justify-center" style={{ height: "100%" }}>
-                                                    <div className="font-semibold text-base truncate text-zinc-900 dark:text-zinc-100" style={{ lineHeight: "1.25" }}>
-                                                        {m.from}
-                                                    </div>
-                                                    <div className="flex items-center justify-between mt-1">
-                                                        <span className="text-sm truncate text-zinc-500 dark:text-zinc-400" style={{ lineHeight: "1.2" }}>
-                                                            {m.content}
-                                                        </span>
-                                                        <span className="text-xs text-zinc-400 ml-3 whitespace-nowrap">{m.time}</span>
-                                                    </div>
-                                                </div>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </Dropdown>
-                            </div>
-
-                            {/* Avatar dropdown */}
-                            <div className="relative flex items-center h-full">
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setOpenProfile((o) => !o);
-                                        setOpenNotif(false);
-                                        setOpenMsg(false);
-                                    }}
-                                    className="w-12 h-12 flex items-center justify-center rounded-full hover:ring-2 ring-blue-500 transition relative cursor-pointer"
-                                    style={{
-                                        position: "relative",
-                                        marginTop: "auto",
-                                        marginBottom: "auto",
-                                    }}
-                                >
-                                    <span className="relative w-12 h-12 flex items-center justify-center">
-                                        <img
-                                            src={avatarUrl}
-                                            alt={displayName}
-                                            className="w-12 h-12 rounded-full object-cover border border-zinc-200 dark:border-zinc-700"
-                                        />
-                                        <span
-                                            className="absolute right-0 bottom-0"
-                                            style={{
-                                                pointerEvents: "none",
-                                                display: "flex",
-                                                alignItems: "center",
-                                                justifyContent: "center",
-                                                zIndex: 3,
-                                            }}
-                                        >
-                                            <svg width="18" height="18" viewBox="0 0 18 18" className="text-zinc-500 dark:text-zinc-300">
-                                                <circle cx="9" cy="9" r="8" fill="white" className="dark:fill-zinc-800" />
-                                                <path d="M9 12l3-4H6l3 4z" fill="currentColor" />
-                                            </svg>
-                                        </span>
-                                    </span>
-                                </button>
-                                <Dropdown open={openProfile} setOpen={setOpenProfile}>
-                                    <div className="px-3 py-2 min-w-[200px] border-b border-zinc-100 dark:border-zinc-800 flex items-center gap-2">
-                                        <img
-                                            src={avatarUrl}
-                                            alt={displayName}
-                                            className="w-8 h-8 rounded-full object-cover border border-zinc-200 dark:border-zinc-700"
-                                        />
-                                        <div>
-                                            <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                                                {displayName}
+                                                    <button
+                                                        type="submit"
+                                                        className={`
+                                                          absolute right-0 top-1/2 -translate-y-1/2 flex items-center justify-center 
+                                                          text-white rounded-full transition cursor-pointer
+                                                        `}
+                                                        tabIndex={-1}
+                                                        style={{
+                                                            background: "#18181B",
+                                                            transition: "background 0.2s",
+                                                            padding: searchButtonFull ? 0 : undefined,
+                                                            width: "40px",
+                                                            height: "40px",
+                                                            minWidth: "40px",
+                                                            minHeight: "40px",
+                                                            border: "1.5px solid #3B3D3E",
+                                                        }}
+                                                        onMouseEnter={e => {
+                                                            (e.currentTarget as HTMLButtonElement).style.background = "#2563eb";
+                                                        }}
+                                                        onMouseLeave={e => {
+                                                            (e.currentTarget as HTMLButtonElement).style.background = "#18181B";
+                                                        }}
+                                                    >
+                                                        <svg width="20" height="20" fill="none" viewBox="0 0 20 20">
+                                                            <circle cx="9.5" cy="9.5" r="7" stroke="currentColor" strokeWidth="2" />
+                                                            <path d="M16.5 16.5L13.5 13.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                                                        </svg>
+                                                    </button>
+                                                </form>
                                             </div>
-                                            {displayUsername && (
-                                                <div className="text-xs text-zinc-400 break-all">
-                                                    @{displayUsername}
-                                                </div>
-                                            )}
-                                            {displayEmail && (
-                                                <div className="text-xs text-zinc-400 break-all">
-                                                    {displayEmail}
-                                                </div>
-                                            )}
+                                        </div>
+
+                                        {!isBelow900 && <HeaderMenuCenter />}
+
+                                        {/* Right: Actions */}
+                                        <div className="flex items-center gap-3 h-full flex-1 justify-end min-w-0">
+                                            {/* Notification bell */}
+                                            <div className="relative flex items-center h-full">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setOpenNotif((o) => !o);
+                                                        setOpenMsg(false);
+                                                        setOpenProfile(false);
+                                                    }}
+                                                    className={`
+                                                        w-12 h-12 flex items-center justify-center rounded-full border
+                                                        transition cursor-pointer
+                                                        ${openNotif ? "bg-blue-600 border-blue-600" : "bg-zinc-900 border-[#3B3D3E] dark:bg-zinc-900"}
+                                                    `}
+                                                    style={{ marginTop: "auto", marginBottom: "auto" }}
+                                                >
+                                                    <svg width="26" height="26" viewBox="0 0 22 22" fill="none">
+                                                        <path
+                                                            d="M11 20a2.25 2.25 0 0 1-2.25-2.25h4.5A2.25 2.25 0 0 1 11 20zM18.5 16v-6a7.5 7.5 0 0 0-15 0v6l-1.5 1.5v.5h18v-.5L18.5 16z"
+                                                            fill={openNotif ? "#fff" : "#fff"}
+                                                            stroke={openNotif ? "#fff" : "#fff"}
+                                                            strokeWidth="1.2"
+                                                        />
+                                                    </svg>
+                                                    <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-blue-500 rounded-full border-2 border-white dark:border-zinc-900"></span>
+                                                </button>
+                                                <Dropdown open={openNotif} setOpen={setOpenNotif}>
+                                                    <div className="font-semibold mb-2 min-w-[350px] max-w-[400px] text-zinc-900 dark:text-zinc-100">Thông báo</div>
+                                                    <ul>
+                                                        {notifications.length === 0 && (
+                                                            <li className="py-3 text-center text-zinc-500">Không có thông báo mới</li>
+                                                        )}
+                                                        {notifications.map((n) => (
+                                                            <li
+                                                                key={n.id}
+                                                                className="py-2 px-2 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer flex gap-2 items-center"
+                                                                onClick={() => {
+                                                                    if (n.type === "friendRequest" && n.from) {
+                                                                        router.push("/friends?key=received");
+                                                                        setOpenNotif(false);
+                                                                        return;
+                                                                    } else if (n.type === "acceptFriend") {
+                                                                        router.push("/friends");
+                                                                        setOpenNotif(false);
+                                                                        return;
+                                                                    }
+                                                                    if (n.post) {
+                                                                        setSelectedPostId(n.post);
+                                                                        setShowPost(true);
+                                                                        setOpenNotif(false);
+                                                                    }
+                                                                }}
+                                                            >
+                                                                <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
+                                                                    {n.avatar && (
+                                                                        <img
+                                                                            src={n.avatar}
+                                                                            alt={n.name || "Avatar"}
+                                                                            className="w-9 h-9 rounded-full object-cover border border-zinc-200 dark:border-zinc-700 flex-shrink-0 mr-3"
+                                                                            style={{ minWidth: 36, minHeight: 36 }}
+                                                                        />
+                                                                    )}
+                                                                    <div className="flex-1 min-w-0">
+                                                                        <div className="text-sm text-zinc-800 dark:text-zinc-200">{n.content}</div>
+                                                                        <div className="text-xs text-zinc-400 mt-0.5 flex items-center gap-2">
+                                                                            {
+                                                                                n.notificationTypeIcon &&
+                                                                                <FontAwesomeIcon
+                                                                                    icon={n.notificationTypeIcon}
+                                                                                    style={{ color: n.notificationTypeIconColor || "#2563eb" }}
+                                                                                    title={n.notificationTypeIconTitle || ""}
+                                                                                    className="mr-1 min-w-[15px]"
+                                                                                />
+                                                                            }
+                                                                            <span>{n.time}</span>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                </Dropdown>
+                                            </div>
+
+                                            {/* Message */}
+                                            <div className="relative flex items-center h-full">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setOpenMsg((o) => !o);
+                                                        setOpenNotif(false);
+                                                        setOpenProfile(false);
+                                                    }}
+                                                    className={`
+                                                        w-12 h-12 flex items-center justify-center rounded-full border
+                                                        transition cursor-pointer
+                                                        ${openMsg ? "bg-blue-600 border-blue-600" : "bg-zinc-900 border-[#3B3D3E] dark:bg-zinc-900"}
+                                                    `}
+                                                    style={{ marginTop: "auto", marginBottom: "auto" }}
+                                                >
+                                                    <svg width="26" height="26" viewBox="0 0 22 22" fill="none">
+                                                        <path
+                                                            d="M2 6.857C2 5.832 2.832 5 3.857 5h14.286C19.168 5 20 5.832 20 6.857v8.286C20 16.168 19.168 17 18.143 17H6l-4 4v-4.143C2 16.168 2 15.143 2 15.143V6.857z"
+                                                            fill={openMsg ? "#fff" : "#fff"}
+                                                            stroke={openMsg ? "#fff" : "#fff"}
+                                                            strokeWidth="1.2"
+                                                        />
+                                                    </svg>
+                                                    <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-white dark:border-zinc-900"></span>
+                                                </button>
+                                                <Dropdown open={openMsg} setOpen={setOpenMsg}>
+                                                    <div
+                                                        className="flex items-center justify-between mb-2 z-2000 text-zinc-900 dark:text-zinc-100"
+                                                        style={{
+                                                            minWidth: "340px",
+                                                        }}
+                                                    >
+                                                        <div className="font-semibold flex items-center">
+                                                            Tin nhắn
+                                                        </div>
+                                                        <div className="ml-2">
+                                                            <CreateGroupButton onGroupCreated={handleGroupCreated} />
+                                                        </div>
+                                                    </div>
+                                                    <MessagePrioritySwitch />
+                                                    <ul>
+                                                        {/* Always show self chat row at the top */}
+                                                        <SelfChatRow />
+                                                        {messages.length === 0 && (
+                                                            <li
+                                                                style={{
+                                                                    width: "340px",
+                                                                    height: "75px",
+                                                                    display: "flex",
+                                                                    alignItems: "center",
+                                                                    justifyContent: "center",
+                                                                }}
+                                                                className="text-center text-zinc-500"
+                                                            >
+                                                                Chưa có tin nhắn
+                                                            </li>
+                                                        )}
+                                                        {messages.map((m) => (
+                                                            <li
+                                                                key={m.id}
+                                                                className="flex items-center gap-4 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
+                                                                style={{
+                                                                    width: "340px",
+                                                                    height: "75px",
+                                                                    padding: "12px 14px",
+                                                                    boxSizing: "border-box"
+                                                                }}
+                                                                onClick={() => {
+                                                                    const msgInfo = {
+                                                                        type: m.type,
+                                                                        userId: m.userId,
+                                                                        conversationId: m.conversationId,
+                                                                        name: m.from,
+                                                                        username: m.username,
+                                                                        avatar: m.avatar,
+                                                                        groupName: m.groupName,
+                                                                        owner: m.owner,
+                                                                    };
+                                                                    handleMessageClick(msgInfo);
+                                                                }}
+                                                            >
+                                                                {m.type === "group" ? (
+                                                                    <GroupAvatar avatar={m.avatar} groupName={m.groupName} size={56} />
+                                                                ) : (
+                                                                    <img
+                                                                        src={m.avatar}
+                                                                        alt={m.from}
+                                                                        className="rounded-full object-cover border"
+                                                                        style={{
+                                                                            width: "56px",
+                                                                            height: "56px",
+                                                                            minWidth: "56px",
+                                                                            minHeight: "56px",
+                                                                        }}
+                                                                    />
+                                                                )}
+                                                                <div className="flex-1 min-w-0 flex flex-col justify-center" style={{ height: "100%" }}>
+                                                                    <div className="font-semibold text-base truncate text-zinc-900 dark:text-zinc-100" style={{ lineHeight: "1.25" }}>
+                                                                        {m.from}
+                                                                    </div>
+                                                                    <div className="flex items-center justify-between mt-1">
+                                                                        <span className="text-sm truncate text-zinc-500 dark:text-zinc-400" style={{ lineHeight: "1.2" }}>
+                                                                            {m.content}
+                                                                        </span>
+                                                                        <span className="text-xs text-zinc-400 ml-3 whitespace-nowrap">{m.time}</span>
+                                                                    </div>
+                                                                </div>
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                </Dropdown>
+                                            </div>
+
+                                            {/* Avatar dropdown */}
+                                            <div className="relative flex items-center h-full">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setOpenProfile((o) => !o);
+                                                        setOpenNotif(false);
+                                                        setOpenMsg(false);
+                                                    }}
+                                                    className="w-12 h-12 flex items-center justify-center rounded-full hover:ring-2 ring-blue-500 transition relative cursor-pointer"
+                                                    style={{
+                                                        position: "relative",
+                                                        marginTop: "auto",
+                                                        marginBottom: "auto",
+                                                    }}
+                                                >
+                                                    <span className="relative w-12 h-12 flex items-center justify-center">
+                                                        <img
+                                                            src={avatarUrl}
+                                                            alt={displayName}
+                                                            className="w-12 h-12 rounded-full object-cover border border-zinc-200 dark:border-zinc-700"
+                                                        />
+                                                        <span
+                                                            className="absolute right-0 bottom-0"
+                                                            style={{
+                                                                pointerEvents: "none",
+                                                                display: "flex",
+                                                                alignItems: "center",
+                                                                justifyContent: "center",
+                                                                zIndex: 3,
+                                                            }}
+                                                        >
+                                                            <svg width="18" height="18" viewBox="0 0 18 18" className="text-zinc-500 dark:text-zinc-300">
+                                                                <circle cx="9" cy="9" r="8" fill="white" className="dark:fill-zinc-800" />
+                                                                <path d="M9 12l3-4H6l3 4z" fill="currentColor" />
+                                                            </svg>
+                                                        </span>
+                                                    </span>
+                                                </button>
+                                                <Dropdown open={openProfile} setOpen={setOpenProfile}>
+                                                    <div className="px-3 py-2 min-w-[200px] border-b border-zinc-100 dark:border-zinc-800 flex items-center gap-2">
+                                                        <img
+                                                            src={avatarUrl}
+                                                            alt={displayName}
+                                                            className="w-8 h-8 rounded-full object-cover border border-zinc-200 dark:border-zinc-700"
+                                                        />
+                                                        <div>
+                                                            <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                                                                {displayName}
+                                                            </div>
+                                                            {displayUsername && (
+                                                                <div className="text-xs text-zinc-400 break-all">
+                                                                    @{displayUsername}
+                                                                </div>
+                                                            )}
+                                                            {displayEmail && (
+                                                                <div className="text-xs text-zinc-400 break-all">
+                                                                    {displayEmail}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    <ul className="py-1">
+                                                        <li>
+                                                            <Link
+                                                                href="/profile"
+                                                                onClick={() => setOpenProfile(false)}
+                                                                className="block w-full px-4 py-2 text-sm rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition text-left text-zinc-800 dark:text-zinc-200"
+                                                            >
+                                                                Trang cá nhân
+                                                            </Link>
+                                                        </li>
+                                                        <li>
+                                                            <button
+                                                                className="block w-full px-4 py-2 text-sm rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition text-left text-red-600"
+                                                                onClick={() => {
+                                                                    setOpenProfile(false);
+                                                                    authLogout(dispatch, router);
+                                                                }}
+                                                            >
+                                                                Đăng xuất
+                                                            </button>
+                                                        </li>
+                                                    </ul>
+                                                </Dropdown>
+                                            </div>
                                         </div>
                                     </div>
-                                    <ul className="py-1">
-                                        <li>
-                                            <Link
-                                                href="/profile"
-                                                onClick={() => setOpenProfile(false)}
-                                                className="block w-full px-4 py-2 text-sm rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition text-left text-zinc-800 dark:text-zinc-200"
-                                            >
-                                                Trang cá nhân
-                                            </Link>
-                                        </li>
-                                        <li>
-                                            <button
-                                                className="block w-full px-4 py-2 text-sm rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition text-left text-red-600"
-                                                onClick={() => {
-                                                    setOpenProfile(false);
-                                                    authLogout(dispatch, router);
-                                                }}
-                                            >
-                                                Đăng xuất
-                                            </button>
-                                        </li>
-                                    </ul>
-                                </Dropdown>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                {isBelow900 && (
-                    <div
-                        className="h-12 w-full flex items-center justify-center bg-white dark:bg-zinc-900 shadow-sm border-b border-zinc-100 dark:border-zinc-800"
-                        style={{ padding: 0, position: "relative" }}
-                    >
-                        <div style={{ width: "100%", height: "100%" }}>
-                            <HeaderMenuCenter />
-                        </div>
-                    </div>
-                )}
-            </header>
-        </>
+                                </div>
+                                {isBelow900 && (
+                                    <div
+                                        className="h-12 w-full flex items-center justify-center bg-white dark:bg-zinc-900 shadow-sm border-b border-zinc-100 dark:border-zinc-800"
+                                        style={{ padding: 0, position: "relative" }}
+                                    >
+                                        <div style={{ width: "100%", height: "100%" }}>
+                                            <HeaderMenuCenter />
+                                        </div>
+                                    </div>
+                                )}
+                            </header>
+                        </>
+                    );
+                }}
+            </SearchParamsSuspenseWrapper>
+        </Suspense>
     );
 }
