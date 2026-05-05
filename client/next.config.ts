@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
 
-/** Proxied to Express so Set-Cookie uses the frontend host (Vercel), not the API host (Render). */
-const BACKEND_URL = process.env.NEXT_PUBLIC_SERVER_URL?.replace(/\/$/, "");
+/**
+ * Chỉ dùng biến server/build (không dùng NEXT_PUBLIC_* làm đích proxy).
+ * Trên Vercel: BACKEND_URL=https://social-network-7h71.onrender.com
+ */
+const BACKEND_URL = process.env.BACKEND_URL?.trim()?.replace(/\/$/, "");
 
 const nextConfig: NextConfig = {
   reactStrictMode: false,

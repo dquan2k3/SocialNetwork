@@ -1,23 +1,34 @@
 import axios from "axios";
 
 /**
- * - Local: NEXT_PUBLIC_SERVER_URL=http://localhost:5000 (direct to Express)
- * - Vercel: omit NEXT_PUBLIC_SERVER_URL or set NEXT_PUBLIC_SERVER_URL=/express-api,
- *   and set BACKEND_URL on Vercel + in next.config (rewrite target) so cookies stay on the frontend domain.
+ * Cookie httpOnly do Express set chỉ “đúng domain” khi response là same-origin với trang (qua rewrite `/express-api`).
+ * Local: NEXT_PUBLIC_SERVER_URL=http://localhost:5000 → gọi thẳng API.
+ * Deploy (Vercel…): luôn gọi `${origin}/express-api` (kể cả env còn trỏ nhầm tới Render).
  */
 function resolveBaseURL(): string {
   const fromEnv = process.env.NEXT_PUBLIC_SERVER_URL?.trim();
-  if (fromEnv && /^https?:\/\//i.test(fromEnv)) {
-    return fromEnv.replace(/\/$/, "");
-  }
-  const prefix = (fromEnv?.startsWith("/") ? fromEnv : "/express-api").replace(
-    /\/$/,
-    ""
-  );
+
   if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    const isLocalDev =
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "[::1]";
+    if (isLocalDev && fromEnv && /^https?:\/\//i.test(fromEnv)) {
+      return fromEnv.replace(/\/$/, "");
+    }
+    const prefix = (fromEnv?.startsWith("/") ? fromEnv : "/express-api").replace(
+      /\/$/,
+      ""
+    );
     return `${window.location.origin}${prefix}`;
   }
-  const internal = process.env.BACKEND_URL?.trim() || "http://localhost:5000";
+
+  /* SSR / Node: gọi thẳng backend (cookie không dùng ở đây thường là không có) */
+  const internal =
+    process.env.BACKEND_URL?.trim() ||
+    (fromEnv && /^https?:\/\//i.test(fromEnv) ? fromEnv : "") ||
+    "http://localhost:5000";
   return internal.replace(/\/$/, "");
 }
 
