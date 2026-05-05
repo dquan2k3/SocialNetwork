@@ -4,7 +4,7 @@ import { profileModel } from '../model/profile.js';
 import { reportModel } from "../model/report.js";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 const { Relationship } = require('../model/relationship');
-const redis = require("../config/redis.js");
+const { Redis } = require("@upstash/redis");
 import { createGroupNotify, disbandGroupNotify, joinGroupNotify, leaveGroupNotify } from '../services/notification.js';
 
 
@@ -15,6 +15,12 @@ const streamifier = require("streamifier");
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyCBSG7jYy0T1NfAd5xs239yz8Zg-wFU4v8';
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+// Initialize Upstash Redis client (please set connection URL/token as needed for your project)
+const redis = new Redis({
+    url: process.env.UPSTASH_REDIS_REST_URL,
+    token: process.env.UPSTASH_REDIS_REST_TOKEN,
+});
 
 
 
@@ -998,9 +1004,11 @@ export const getOnlineUser = async (req, res) => {
         let onlineFriendIds = [];
         try {
             // Lấy tất cả ID user online từ redis
-            const allOnlineIdsRaw = await redis.sMembers("online_users");
-            // Lọc ra friendIds nào nằm trong online, không lấy chính bản thân (dù có online)
-            onlineFriendIds = friendIds.filter(fid => allOnlineIdsRaw.includes(fid) && fid !== userIdStr);
+            const allOnlineIdsRaw = await redis.smembers("online_users");
+            const onlineSet = new Set((allOnlineIdsRaw || []).map((id) => String(id)));
+            onlineFriendIds = friendIds.filter(
+                (fid) => onlineSet.has(String(fid)) && fid !== userIdStr
+            );
         } catch (redisErr) {
             // Nếu lỗi redis, vẫn trả về rỗng
             console.error("Lỗi redis trong getOnlineUser:", redisErr);
