@@ -10,8 +10,19 @@ export function useChatSocket(userId: string, name?: string) {
     // ---- Đăng ký user khi connect ----
     useEffect(() => {        
         if (!socket || !userId) return;
-        console.log("[useChatSocket] useEffect chạy vì dependency(s) thay đổi:", { socket, userId });
-        socket.emit(SOCKET_EVENTS.USER_CONNECT, name);
+
+        const emitUserConnect = () => {
+            // Chỉ emit khi socket đã connected để tránh enqueue/online "ảo"
+            if (!socket.connected) return;
+            socket.emit(SOCKET_EVENTS.USER_CONNECT, name);
+        };
+
+        emitUserConnect();
+        socket.on(SOCKET_EVENTS.CONNECT, emitUserConnect);
+
+        return () => {
+            socket.off(SOCKET_EVENTS.CONNECT, emitUserConnect);
+        };
     }, [socket, userId]);
 
     // ---- Gửi tin nhắn cá nhân ----
