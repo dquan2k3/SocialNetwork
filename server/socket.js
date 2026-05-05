@@ -56,6 +56,19 @@ function decodeUserFromCookie(cookieString) {
     }
 }
 
+function decodeUserFromHandshake(socket) {
+    const authToken = socket.handshake.auth && socket.handshake.auth.token;
+    if (authToken) {
+        try {
+            return jwt.verify(authToken, process.env.JWT_SECRET);
+        } catch {
+            return null;
+        }
+    }
+    const cookies = socket.handshake.headers.cookie;
+    return decodeUserFromCookie(cookies);
+}
+
 function registerSocket(server) {
     console.log("[registerSocket] Đang khởi tạo socket server...");
     io = new Server(server, {
@@ -80,8 +93,7 @@ function registerSocket(server) {
         socket.on("userConnect", async (name) => {
             socket.data.name = name;
 
-            const cookies = socket.handshake.headers.cookie;
-            const decoded = decodeUserFromCookie(cookies);
+            const decoded = decodeUserFromHandshake(socket);
             const userId = decoded?.id;
             const avatar = decoded?.avatar;
 

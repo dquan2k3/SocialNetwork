@@ -10,8 +10,8 @@ const app = express();
 
 
 app.use(cors({
-    origin: process.env.CLIENT_URL, 
-    credentials: true, 
+    origin: process.env.CLIENT_URL?.trim?.() ?? process.env.CLIENT_URL,
+    credentials: true,
     methods: ["POST", "GET", "PUT", "DELETE"]
 }));
 

@@ -292,12 +292,22 @@ export const checklogin = async (req, res) => {
 };
 
 
+// JWT cho Socket.IO khi client và API khác domain (cookie không gửi được qua WS tới Render)
+export const socketToken = (req, res) => {
+    const token = req.cookies?.token;
+    if (!token) {
+        return res.status(401).json({ success: false, message: 'Missing token' });
+    }
+    return res.json({ success: true, token });
+};
+
 // Đăng xuất: Xóa token ở cookie
 export const logout = (req, res) => {
     res.clearCookie('token', {
         httpOnly: true,
-        secure: false,
-        sameSite: 'strict'
+        secure: true,
+        sameSite: 'none',
+        path: '/'
     });
     res.json({ success: true, message: 'Đăng xuất thành công' });
 };

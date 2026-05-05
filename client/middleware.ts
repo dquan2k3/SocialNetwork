@@ -20,9 +20,7 @@ function decodeJwt(token: string) {
 
 export function middleware(req: NextRequest) {
     const token = req.cookies.get("token")?.value;
-    console.log("token", token)
     const pathname = req.nextUrl.pathname;
-    console.log("pathname", pathname)
     let decoded: any = null;
 
     // Nếu có token, decode
@@ -37,6 +35,11 @@ export function middleware(req: NextRequest) {
         pathname.startsWith("/images") ||
         pathname.startsWith("/fonts")
     ) {
+        return NextResponse.next();
+    }
+
+    // Same-origin API proxy → không chặn login / API (cookie được set trên domain Vercel)
+    if (pathname.startsWith("/express-api")) {
         return NextResponse.next();
     }
 
@@ -60,7 +63,7 @@ export function middleware(req: NextRequest) {
     }
 
     // Nếu vào /management mà không có quyền Admin thì redirect về /home
-    if (pathname.startsWith("/management")) {
+    if (pathname.startsWith("/management")) { 
         if (!decoded || decoded.role !== "Admin") {
             return NextResponse.redirect(new URL("/home", req.url));
         }

@@ -1,12 +1,28 @@
 import axios from "axios";
 
-const API_URL =
-  typeof window !== "undefined"
-    ? `${window.location.protocol}//${window.location.hostname}:5000`
-    : "http://localhost:5000";
+/**
+ * - Local: NEXT_PUBLIC_SERVER_URL=http://localhost:5000 (direct to Express)
+ * - Vercel: omit NEXT_PUBLIC_SERVER_URL or set NEXT_PUBLIC_SERVER_URL=/express-api,
+ *   and set BACKEND_URL on Vercel + in next.config (rewrite target) so cookies stay on the frontend domain.
+ */
+function resolveBaseURL(): string {
+  const fromEnv = process.env.NEXT_PUBLIC_SERVER_URL?.trim();
+  if (fromEnv && /^https?:\/\//i.test(fromEnv)) {
+    return fromEnv.replace(/\/$/, "");
+  }
+  const prefix = (fromEnv?.startsWith("/") ? fromEnv : "/express-api").replace(
+    /\/$/,
+    ""
+  );
+  if (typeof window !== "undefined") {
+    return `${window.location.origin}${prefix}`;
+  }
+  const internal = process.env.BACKEND_URL?.trim() || "http://localhost:5000";
+  return internal.replace(/\/$/, "");
+}
 
 const instance = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_SERVER_URL,
+  baseURL: resolveBaseURL(),
   withCredentials: true,
 });
 

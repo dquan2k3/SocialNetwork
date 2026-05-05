@@ -1,7 +1,13 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { getSocket } from "./socket";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  ReactNode,
+} from "react";
+import { connectSocket } from "./socket";
 import type { Socket } from "socket.io-client";
 import { SOCKET_EVENTS } from "./socket-events";
 
@@ -9,26 +15,40 @@ type SocketType = Socket | null;
 
 const SocketContext = createContext<SocketType>(null);
 export function SocketProvider({ children }: { children: ReactNode }) {
-  const [socket] = useState(() => getSocket());
+  const [socket, setSocket] = useState<SocketType>(null);
+
   useEffect(() => {
-    if (!socket) return;
+    let cancelled = false;
+    let s: Socket | null = null;
 
-    socket.connect();
-    console.log("Client socket connecting...");
+    connectSocket().then((sock) => {
+      if (cancelled) {
+        sock.removeAllListeners();
+        sock.disconnect();
+        return;
+      }
+      s = sock;
+      setSocket(sock);
+      sock.connect();
 
-    function onConnect() {
-      console.log("Client socket connected:", socket.id);
-    }
-    socket.on(SOCKET_EVENTS.CONNECT, onConnect);
+      function onConnect() {
+        console.log("Client socket connected:", sock.id);
+      }
+      sock.on(SOCKET_EVENTS.CONNECT, onConnect);
+    });
 
     return () => {
-      socket.off(SOCKET_EVENTS.CONNECT, onConnect);
-      socket.disconnect();
-      console.log("Client socket disconnected");
+      cancelled = true;
+      if (s) {
+        s.off(SOCKET_EVENTS.CONNECT);
+        s.disconnect();
+      }
     };
-  }, [socket]);
+  }, []);
 
-  return <SocketContext.Provider value={socket}>{children}</SocketContext.Provider>;
+  return (
+    <SocketContext.Provider value={socket}>{children}</SocketContext.Provider>
+  );
 }
 
 export function useSocket() {
